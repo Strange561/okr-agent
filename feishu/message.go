@@ -13,7 +13,7 @@ func (c *Client) SendTextMessage(ctx context.Context, userID, text string) error
 	content, _ := json.Marshal(map[string]string{"text": text})
 
 	req := larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType("user_id").
+		ReceiveIdType("open_id").
 		Body(larkim.NewCreateMessageReqBodyBuilder().
 			ReceiveId(userID).
 			MsgType("text").
@@ -48,7 +48,7 @@ func (c *Client) SendRichMessage(ctx context.Context, userID, title, contentText
 	content, _ := json.Marshal(post)
 
 	req := larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType("user_id").
+		ReceiveIdType("open_id").
 		Body(larkim.NewCreateMessageReqBodyBuilder().
 			ReceiveId(userID).
 			MsgType("post").

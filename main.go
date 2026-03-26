@@ -2,17 +2,18 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
+	"okr-agent/agent"
+	"okr-agent/claude"
 	"okr-agent/config"
-	"okr-agent/evaluator"
 	"okr-agent/feishu"
+	"okr-agent/memory"
 	"okr-agent/scheduler"
+	"okr-agent/tools"
 )
 
 func main() {
@@ -26,68 +27,57 @@ func main() {
 	if cfg.FeishuAppID == "" || cfg.FeishuAppSecret == "" {
 		log.Fatal("FEISHU_APP_ID and FEISHU_APP_SECRET are required")
 	}
-	if cfg.AnthropicAPIKey == "" {
-		log.Fatal("ANTHROPIC_API_KEY is required")
+	if cfg.AzureEndpoint == "" || cfg.AzureAPIKey == "" || cfg.AzureDeployment == "" {
+		log.Fatal("AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_DEPLOYMENT are required")
 	}
 
 	// Initialize clients
 	feishuClient := feishu.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret)
-	eval := evaluator.New(cfg.AnthropicAPIKey)
-	sched := scheduler.New(feishuClient, eval, cfg)
+	llmClient := claude.NewClient(cfg.AzureEndpoint, cfg.AzureAPIKey, cfg.AzureDeployment)
 
-	// Start cron scheduler
+	log.Printf("Using Azure OpenAI deployment: %s", llmClient.Deployment())
+
+	// Initialize memory store
+	store, err := memory.NewStore(cfg.SQLitePath)
+	if err != nil {
+		log.Fatalf("Failed to initialize store: %v", err)
+	}
+	defer store.Close()
+
+	log.Printf("Database initialized at: %s", cfg.SQLitePath)
+
+	// Register tools
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewGetUserOKRsTool(feishuClient, store))
+	registry.Register(tools.NewGetOKRHistoryTool(store))
+	registry.Register(tools.NewCompareOKRPeriodsTool(feishuClient))
+	registry.Register(tools.NewSendMessageTool(feishuClient))
+	registry.Register(tools.NewSendReminderTool(feishuClient))
+	registry.Register(tools.NewSendTeamNotificationTool(feishuClient, cfg.OKRUserIDs, cfg.DepartmentIDs))
+	registry.Register(tools.NewListTeamMembersTool(feishuClient, cfg.OKRUserIDs, cfg.DepartmentIDs))
+	registry.Register(tools.NewUpdateOKRProgressTool())
+
+	// Create agent
+	ag := agent.New(llmClient, registry, store)
+
+	// Start scheduler
+	sched := scheduler.New(feishuClient, ag, store, cfg)
 	if err := sched.Start(); err != nil {
 		log.Fatalf("Failed to start scheduler: %v", err)
 	}
 	defer sched.Stop()
 
-	// Setup bot commands
+	// Setup bot with agent handler
 	bot := feishu.NewBot(feishuClient)
-
-	bot.RegisterCommand("检查OKR", func(ctx context.Context, senderID string, _ []string) string {
-		userIDs, err := feishuClient.CollectUserIDs(ctx, cfg.OKRUserIDs, cfg.DepartmentIDs)
+	bot.SetHandler(func(ctx context.Context, senderID string, _ []feishu.MentionedUser, text string) string {
+		result, err := ag.Run(ctx, senderID, text)
 		if err != nil {
-			return fmt.Sprintf("获取用户列表失败: %v", err)
+			log.Printf("Agent error for user %s: %v", senderID, err)
+			return "抱歉，处理你的请求时出错了，请稍后再试。"
 		}
-
-		if len(userIDs) == 0 {
-			return "未配置任何监控用户，请检查 OKR_USER_IDS 或 FEISHU_DEPARTMENT_IDS 配置。"
-		}
-
-		var results []string
-		for _, uid := range userIDs {
-			evaluation, err := sched.CheckSingleUser(ctx, uid)
-			if err != nil {
-				results = append(results, fmt.Sprintf("用户 %s: 检查失败 - %v", uid, err))
-				continue
-			}
-			results = append(results, fmt.Sprintf("用户 %s:\n%s", uid, evaluation))
-		}
-
-		return strings.Join(results, "\n\n---\n\n")
+		return result.Response
 	})
 
-	bot.RegisterCommand("评价", func(ctx context.Context, senderID string, mentionedUserIDs []string) string {
-		if len(mentionedUserIDs) == 0 {
-			return "请在命令后 @mention 需要评价的用户，例如：评价 @张三"
-		}
-
-		var results []string
-		for _, uid := range mentionedUserIDs {
-			evaluation, err := sched.CheckSingleUser(ctx, uid)
-			if err != nil {
-				results = append(results, fmt.Sprintf("用户 %s: 评价失败 - %v", uid, err))
-				continue
-			}
-			results = append(results, fmt.Sprintf("用户 %s:\n%s", uid, evaluation))
-		}
-
-		return strings.Join(results, "\n\n---\n\n")
-	})
-
-	// "帮助" and any unrecognized command will trigger the default help text in bot.go
-
-	// Start bot in a goroutine
 	go func() {
 		if err := bot.Start(); err != nil {
 			log.Printf("Bot error: %v", err)
@@ -96,7 +86,6 @@ func main() {
 
 	log.Println("OKR Agent started successfully")
 
-	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh

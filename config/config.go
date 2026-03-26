@@ -7,22 +7,27 @@ import (
 )
 
 type Config struct {
-	FeishuAppID       string
-	FeishuAppSecret   string
-	AnthropicAPIKey   string
-	OKRUserIDs        []string
-	DepartmentIDs     []string
-	CronSchedule      string
+	FeishuAppID     string
+	FeishuAppSecret string
+	AzureEndpoint   string
+	AzureAPIKey     string
+	AzureDeployment string
+	SQLitePath      string
+	OKRUserIDs      []string
+	DepartmentIDs   []string
+	CronSchedule    string
 }
 
 func Load() (*Config, error) {
-	// Load .env file if it exists
 	loadEnvFile(".env")
 
 	cfg := &Config{
 		FeishuAppID:     getEnv("FEISHU_APP_ID", ""),
 		FeishuAppSecret: getEnv("FEISHU_APP_SECRET", ""),
-		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
+		AzureEndpoint:   getEnv("AZURE_OPENAI_ENDPOINT", ""),
+		AzureAPIKey:     getEnv("AZURE_OPENAI_API_KEY", ""),
+		AzureDeployment: getEnv("AZURE_OPENAI_DEPLOYMENT", ""),
+		SQLitePath:      getEnv("SQLITE_PATH", "./data/okr-agent.db"),
 		CronSchedule:    getEnv("CRON_SCHEDULE", "0 9 * * 1"),
 	}
 
@@ -56,7 +61,6 @@ func loadEnvFile(path string) {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
-		// Don't override existing env vars
 		if os.Getenv(key) == "" {
 			os.Setenv(key, val)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"sync"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -12,26 +13,36 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
-// CommandHandler is a callback for bot commands.
-type CommandHandler func(ctx context.Context, senderID string, mentionedUserIDs []string) string
+// MentionedUser holds info about a mentioned user.
+type MentionedUser struct {
+	OpenID string
+	Name   string
+}
+
+// MessageHandler processes any incoming message and returns a response.
+type MessageHandler func(ctx context.Context, senderID string, mentionedUsers []MentionedUser, text string) string
 
 // Bot handles Feishu bot events via WebSocket.
 type Bot struct {
-	client   *Client
-	handlers map[string]CommandHandler
+	client  *Client
+	handler MessageHandler
+
+	// Dedup: track processed message IDs to avoid retries
+	seen   map[string]bool
+	seenMu sync.Mutex
 }
 
 // NewBot creates a new Bot instance.
 func NewBot(client *Client) *Bot {
 	return &Bot{
-		client:   client,
-		handlers: make(map[string]CommandHandler),
+		client: client,
+		seen:   make(map[string]bool),
 	}
 }
 
-// RegisterCommand registers a command handler.
-func (b *Bot) RegisterCommand(command string, handler CommandHandler) {
-	b.handlers[command] = handler
+// SetHandler sets the single message handler that routes all messages to the agent.
+func (b *Bot) SetHandler(handler MessageHandler) {
+	b.handler = handler
 }
 
 // messageContent represents the JSON content of a received message.
@@ -49,7 +60,7 @@ func (b *Bot) Start() error {
 
 	wsClient := larkws.NewClient(b.client.AppID, b.client.AppSecret,
 		larkws.WithEventHandler(eventHandler),
-		larkws.WithLogLevel(larkcore.LogLevelInfo),
+		larkws.WithLogLevel(larkcore.LogLevelDebug),
 	)
 
 	log.Println("Bot WebSocket connecting...")
@@ -61,10 +72,24 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 		return
 	}
 
+	// Dedup by event_id
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		eventID := event.EventV2Base.Header.EventID
+		b.seenMu.Lock()
+		if b.seen[eventID] {
+			b.seenMu.Unlock()
+			log.Printf("Skipping duplicate event: %s", eventID)
+			return
+		}
+		b.seen[eventID] = true
+		b.seenMu.Unlock()
+	}
+
 	msg := event.Event.Message
+
 	senderID := ""
-	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil && event.Event.Sender.SenderId.UserId != nil {
-		senderID = *event.Event.Sender.SenderId.UserId
+	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil && event.Event.Sender.SenderId.OpenId != nil {
+		senderID = *event.Event.Sender.SenderId.OpenId
 	}
 
 	if senderID == "" {
@@ -81,48 +106,51 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 	}
 
 	text := strings.TrimSpace(content.Text)
-	// Remove @bot mentions from text (format: @_user_1)
 	text = cleanMentions(text)
 	text = strings.TrimSpace(text)
 
-	// Extract mentioned user IDs
-	var mentionedUserIDs []string
+	// Extract mentioned users
+	var mentionedUsers []MentionedUser
 	if msg.Mentions != nil {
 		for _, mention := range msg.Mentions {
-			if mention.Id != nil && mention.Id.UserId != nil {
-				mentionedUserIDs = append(mentionedUserIDs, *mention.Id.UserId)
+			if mention.Id != nil && mention.Id.OpenId != nil {
+				name := ""
+				if mention.Name != nil {
+					name = *mention.Name
+				}
+				mentionedUsers = append(mentionedUsers, MentionedUser{OpenID: *mention.Id.OpenId, Name: name})
 			}
 		}
 	}
 
-	log.Printf("Received command: '%s' from user: %s", text, senderID)
+	log.Printf("Received message: '%s' from user: %s", text, senderID)
 
-	// Match command
-	var response string
-	matched := false
-	for cmd, handler := range b.handlers {
-		if strings.HasPrefix(text, cmd) {
-			response = handler(ctx, senderID, mentionedUserIDs)
-			matched = true
-			break
+	if b.handler == nil {
+		log.Println("No handler registered")
+		return
+	}
+
+	// Enrich text with mention information so the agent knows who was mentioned
+	enrichedText := text
+	if len(mentionedUsers) > 0 {
+		var mentions []string
+		for _, u := range mentionedUsers {
+			name := u.Name
+			if name == "" {
+				name = "unknown"
+			}
+			mentions = append(mentions, name+" (open_id: "+u.OpenID+")")
+		}
+		enrichedText = text + "\n\n[提及的用户: " + strings.Join(mentions, ", ") + "]"
+	}
+
+	response := b.handler(ctx, senderID, mentionedUsers, enrichedText)
+
+	if response != "" {
+		if err := b.client.SendTextMessage(ctx, senderID, response); err != nil {
+			log.Printf("Failed to reply to %s: %v", senderID, err)
 		}
 	}
-
-	if !matched {
-		response = b.helpText()
-	}
-
-	if err := b.client.SendTextMessage(ctx, senderID, response); err != nil {
-		log.Printf("Failed to reply to %s: %v", senderID, err)
-	}
-}
-
-func (b *Bot) helpText() string {
-	return `🤖 OKR Agent 可用命令：
-
-• 检查OKR — 检查所有监控用户的 OKR 并返回摘要
-• 评价 @某人 — 针对指定人进行 OKR 评价
-• 帮助 — 显示本帮助信息`
 }
 
 // cleanMentions removes @_user_N patterns from text.

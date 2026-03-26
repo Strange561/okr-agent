@@ -3,18 +3,26 @@ package feishu
 import (
 	"context"
 	"fmt"
+	"log"
 
 	larkcontact "github.com/larksuite/oapi-sdk-go/v3/service/contact/v3"
 )
 
-// GetDepartmentUserIDs fetches user IDs from a department.
-func (c *Client) GetDepartmentUserIDs(ctx context.Context, departmentID string) ([]string, error) {
-	var userIDs []string
+// UserInfo holds a user's open_id and name.
+type UserInfo struct {
+	OpenID string
+	Name   string
+}
+
+// GetDepartmentUsers fetches users (open_id + name) from a department.
+func (c *Client) GetDepartmentUsers(ctx context.Context, departmentID string) ([]UserInfo, error) {
+	var users []UserInfo
 	pageToken := ""
 
 	for {
 		req := larkcontact.NewFindByDepartmentUserReqBuilder().
 			DepartmentId(departmentID).
+			DepartmentIdType("open_department_id").
 			PageSize(50)
 		if pageToken != "" {
 			req.PageToken(pageToken)
@@ -29,8 +37,12 @@ func (c *Client) GetDepartmentUserIDs(ctx context.Context, departmentID string) 
 		}
 
 		for _, user := range resp.Data.Items {
-			if user.UserId != nil {
-				userIDs = append(userIDs, *user.UserId)
+			if user.OpenId != nil {
+				name := ""
+				if user.Name != nil {
+					name = *user.Name
+				}
+				users = append(users, UserInfo{OpenID: *user.OpenId, Name: name})
 			}
 		}
 
@@ -42,33 +54,92 @@ func (c *Client) GetDepartmentUserIDs(ctx context.Context, departmentID string) 
 		}
 	}
 
-	return userIDs, nil
+	return users, nil
 }
 
-// CollectUserIDs merges static user IDs from config with dynamic ones from departments.
-func (c *Client) CollectUserIDs(ctx context.Context, staticIDs, departmentIDs []string) ([]string, error) {
+// GetSubDepartmentIDs fetches all child department IDs recursively.
+func (c *Client) GetSubDepartmentIDs(ctx context.Context, parentDeptID string) ([]string, error) {
+	var allDepts []string
+	pageToken := ""
+
+	for {
+		req := larkcontact.NewChildrenDepartmentReqBuilder().
+			DepartmentId(parentDeptID).
+			DepartmentIdType("open_department_id").
+			PageSize(50)
+		if pageToken != "" {
+			req.PageToken(pageToken)
+		}
+
+		resp, err := c.LarkClient.Contact.Department.Children(ctx, req.Build())
+		if err != nil {
+			return nil, fmt.Errorf("get sub departments: %w", err)
+		}
+		if !resp.Success() {
+			return nil, fmt.Errorf("get sub departments failed: code=%d msg=%s", resp.Code, resp.Msg)
+		}
+
+		for _, dept := range resp.Data.Items {
+			if dept.OpenDepartmentId != nil {
+				deptID := *dept.OpenDepartmentId
+				allDepts = append(allDepts, deptID)
+				subDepts, err := c.GetSubDepartmentIDs(ctx, deptID)
+				if err != nil {
+					log.Printf("Warning: failed to get sub departments of %s: %v", deptID, err)
+					continue
+				}
+				allDepts = append(allDepts, subDepts...)
+			}
+		}
+
+		if resp.Data.HasMore == nil || !*resp.Data.HasMore {
+			break
+		}
+		if resp.Data.PageToken != nil {
+			pageToken = *resp.Data.PageToken
+		}
+	}
+
+	return allDepts, nil
+}
+
+// CollectUsers merges static user IDs from config with dynamic ones from departments (recursive).
+// Returns a list of UserInfo with open_id and name.
+func (c *Client) CollectUsers(ctx context.Context, staticIDs, departmentIDs []string) ([]UserInfo, error) {
 	seen := make(map[string]bool)
-	var result []string
+	var result []UserInfo
 
 	for _, id := range staticIDs {
 		if !seen[id] {
 			seen[id] = true
-			result = append(result, id)
+			result = append(result, UserInfo{OpenID: id, Name: ""})
 		}
 	}
 
 	for _, deptID := range departmentIDs {
-		ids, err := c.GetDepartmentUserIDs(ctx, deptID)
+		allDepts := []string{deptID}
+		subDepts, err := c.GetSubDepartmentIDs(ctx, deptID)
 		if err != nil {
-			return nil, fmt.Errorf("department %s: %w", deptID, err)
+			log.Printf("Warning: failed to get sub departments of %s: %v", deptID, err)
+		} else {
+			allDepts = append(allDepts, subDepts...)
 		}
-		for _, id := range ids {
-			if !seen[id] {
-				seen[id] = true
-				result = append(result, id)
+
+		for _, d := range allDepts {
+			users, err := c.GetDepartmentUsers(ctx, d)
+			if err != nil {
+				log.Printf("Warning: failed to get users from department %s: %v", d, err)
+				continue
+			}
+			for _, u := range users {
+				if !seen[u.OpenID] {
+					seen[u.OpenID] = true
+					result = append(result, u)
+				}
 			}
 		}
 	}
 
+	log.Printf("Collected %d users total", len(result))
 	return result, nil
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -19,34 +20,37 @@ type OKRData struct {
 
 // OKRItem represents a single OKR (one Objective with its Key Results).
 type OKRItem struct {
-	ID           string      `json:"id"`
-	Title        string      `json:"title"`
-	Permission   int         `json:"permission"`
-	Period       *OKRPeriod  `json:"period"`
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	PeriodID      string      `json:"period_id"`
+	Permission    int         `json:"permission"`
 	ObjectiveList []Objective `json:"objective_list"`
 }
 
-type OKRPeriod struct {
-	PeriodID string `json:"period_id"`
-	Name     string `json:"zh_name"`
+type ProgressRate struct {
+	Percent int    `json:"percent"`
+	Status  string `json:"status"`
 }
 
 type Objective struct {
-	ID             string       `json:"id"`
-	Content        string       `json:"content"`
-	MentionList    []Mention    `json:"mention_list,omitempty"`
-	ProgressRate   int          `json:"progress_rate"`
-	KeyResultList  []KeyResult  `json:"kr_list"`
-	ModifiedTime   int64        `json:"modified_time,omitempty"`
+	ID                        string        `json:"id"`
+	Content                   string        `json:"content"`
+	MentionList               []Mention     `json:"mention_list,omitempty"`
+	ProgressRate              *ProgressRate `json:"progress_rate,omitempty"`
+	KeyResultList             []KeyResult   `json:"kr_list"`
+	ProgressRecordLastUpdated string        `json:"progress_record_last_updated_time,omitempty"`
+	ProgressRateLastUpdated   string        `json:"progress_rate_percent_last_updated_time,omitempty"`
+	Weight                    int           `json:"weight"`
 }
 
 type KeyResult struct {
-	ID           string  `json:"id"`
-	Content      string  `json:"content"`
-	Score        int     `json:"score"`
-	Weight       int     `json:"weight"`
-	ProgressRate int     `json:"progress_rate"`
-	ModifiedTime int64   `json:"modified_time,omitempty"`
+	ID                        string        `json:"id"`
+	Content                   string        `json:"content"`
+	Score                     int           `json:"score"`
+	Weight                    int           `json:"weight"`
+	ProgressRate              *ProgressRate `json:"progress_rate,omitempty"`
+	ProgressRecordLastUpdated string        `json:"progress_record_last_updated_time,omitempty"`
+	ProgressRateLastUpdated   string        `json:"progress_rate_percent_last_updated_time,omitempty"`
 }
 
 type Mention struct {
@@ -64,14 +68,14 @@ type okrAPIResponse struct {
 }
 
 // GetUserOKRs fetches OKR data for a given user.
-// The Lark SDK doesn't have a built-in OKR method, so we call the REST API directly.
-func (c *Client) GetUserOKRs(ctx context.Context, userID string) (*OKRData, error) {
+// month: target month in "2006-01" format, empty string means current month.
+func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (*OKRData, error) {
 	token, err := c.getTenantAccessToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get token: %w", err)
 	}
 
-	url := fmt.Sprintf("https://open.feishu.cn/open-apis/okr/v1/users/%s/okrs", userID)
+	url := fmt.Sprintf("https://open.feishu.cn/open-apis/okr/v1/users/%s/okrs?user_id_type=open_id&offset=0&limit=10", userID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -90,6 +94,8 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string) (*OKRData, erro
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 
+	log.Printf("OKR API response: %s", string(body))
+
 	var apiResp okrAPIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
@@ -99,11 +105,21 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string) (*OKRData, erro
 		return nil, fmt.Errorf("OKR API error: code=%d msg=%s", apiResp.Code, apiResp.Msg)
 	}
 
+	// Month filter: e.g. "2026-03"
+	targetMonth := month
+	if targetMonth == "" {
+		targetMonth = time.Now().Format("2006-01")
+	}
+
 	var okrItems []OKRItem
 	for _, raw := range apiResp.Data.OKRList {
 		var item OKRItem
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, fmt.Errorf("unmarshal OKR item: %w", err)
+		}
+		// Only keep OKRs matching the target month
+		if item.Name != "" && !isCurrentMonthPeriod(item.Name, targetMonth) {
+			continue
 		}
 		okrItems = append(okrItems, item)
 	}
@@ -158,6 +174,74 @@ func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
 	return tokenResp.TenantAccessToken, nil
 }
 
+// isCurrentMonthPeriod checks if a period name matches the current month.
+// Handles formats like "3月", "3 月", "2026 年 3 月", "2026-03" etc.
+func isCurrentMonthPeriod(periodName, currentMonth string) bool {
+	if periodName == "" {
+		return true
+	}
+	// Remove all spaces for easier matching
+	name := strings.ReplaceAll(periodName, " ", "")
+
+	parts := strings.Split(currentMonth, "-")
+	if len(parts) != 2 {
+		return true
+	}
+	year := parts[0]
+	monthNum := strings.TrimLeft(parts[1], "0") // "03" -> "3"
+
+	// Match year + month like "2026年3月"
+	if strings.Contains(name, year) && strings.Contains(name, monthNum+"月") {
+		return true
+	}
+	// Match "2026-03"
+	if strings.Contains(name, currentMonth) {
+		return true
+	}
+	return false
+}
+
+// CheckUpdateStatus checks if an OKR has been updated within the last 7 days.
+// Returns true if outdated (not updated in 7+ days).
+func IsOutdated(modifiedTime int64) bool {
+	if modifiedTime == 0 {
+		return true
+	}
+	return time.Since(time.Unix(modifiedTime, 0)) > 7*24*time.Hour
+}
+
+// parseMilliTimestamp parses a millisecond timestamp string to unix seconds.
+func parseMilliTimestamp(s string) int64 {
+	if s == "" || s == "0" {
+		return 0
+	}
+	var ms int64
+	fmt.Sscanf(s, "%d", &ms)
+	return ms / 1000
+}
+
+// LatestModifiedTime returns the most recent modified time (unix seconds) across all objectives and KRs.
+func LatestModifiedTime(okr *OKRData) int64 {
+	var latest int64
+	for _, item := range okr.OKRList {
+		for _, obj := range item.ObjectiveList {
+			for _, ts := range []string{obj.ProgressRecordLastUpdated, obj.ProgressRateLastUpdated} {
+				if t := parseMilliTimestamp(ts); t > latest {
+					latest = t
+				}
+			}
+			for _, kr := range obj.KeyResultList {
+				for _, ts := range []string{kr.ProgressRecordLastUpdated, kr.ProgressRateLastUpdated} {
+					if t := parseMilliTimestamp(ts); t > latest {
+						latest = t
+					}
+				}
+			}
+		}
+	}
+	return latest
+}
+
 // FormatOKRForEvaluation converts OKR data into a readable string for Claude evaluation.
 func FormatOKRForEvaluation(data *OKRData) string {
 	if data == nil || len(data.OKRList) == 0 {
@@ -165,31 +249,45 @@ func FormatOKRForEvaluation(data *OKRData) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("用户 ID: %s\n", data.UserID))
-	b.WriteString(fmt.Sprintf("获取时间: %s\n\n", data.FetchedAt.Format("2006-01-02 15:04:05")))
+	b.WriteString(fmt.Sprintf("获取时间: %s\n", data.FetchedAt.Format("2006-01-02 15:04:05")))
 
-	for i, okr := range data.OKRList {
-		b.WriteString(fmt.Sprintf("=== OKR #%d: %s ===\n", i+1, okr.Title))
-		if okr.Period != nil {
-			b.WriteString(fmt.Sprintf("周期: %s\n", okr.Period.Name))
+	latest := LatestModifiedTime(data)
+	if latest > 0 {
+		b.WriteString(fmt.Sprintf("最近一次更新: %s\n", time.Unix(latest, 0).Format("2006-01-02 15:04:05")))
+	}
+	if IsOutdated(latest) {
+		if latest == 0 {
+			b.WriteString("⚠️ 警告：该用户的 OKR 没有任何更新记录！\n")
+		} else {
+			days := int(time.Since(time.Unix(latest, 0)).Hours() / 24)
+			b.WriteString(fmt.Sprintf("⚠️ 警告：该用户已 %d 天未更新 OKR，请及时更新！\n", days))
 		}
+	}
+	b.WriteString("\n")
+
+	for _, okr := range data.OKRList {
+		b.WriteString(fmt.Sprintf("=== OKR: %s ===\n", okr.Name))
 
 		for j, obj := range okr.ObjectiveList {
 			b.WriteString(fmt.Sprintf("\nObjective %d: %s\n", j+1, obj.Content))
-			b.WriteString(fmt.Sprintf("  整体进度: %d%%\n", obj.ProgressRate))
+			if obj.ProgressRate != nil {
+				b.WriteString(fmt.Sprintf("  整体进度: %d%%\n", obj.ProgressRate.Percent))
+			}
 
-			if obj.ModifiedTime > 0 {
-				t := time.Unix(obj.ModifiedTime, 0)
-				b.WriteString(fmt.Sprintf("  最近更新: %s\n", t.Format("2006-01-02 15:04:05")))
+			if t := parseMilliTimestamp(obj.ProgressRateLastUpdated); t > 0 {
+				b.WriteString(fmt.Sprintf("  最近更新: %s\n", time.Unix(t, 0).Format("2006-01-02 15:04:05")))
 			}
 
 			for k, kr := range obj.KeyResultList {
 				b.WriteString(fmt.Sprintf("  KR %d: %s\n", k+1, kr.Content))
+				progress := 0
+				if kr.ProgressRate != nil {
+					progress = kr.ProgressRate.Percent
+				}
 				b.WriteString(fmt.Sprintf("    进度: %d%%, 评分: %d, 权重: %d%%\n",
-					kr.ProgressRate, kr.Score, kr.Weight))
-				if kr.ModifiedTime > 0 {
-					t := time.Unix(kr.ModifiedTime, 0)
-					b.WriteString(fmt.Sprintf("    最近更新: %s\n", t.Format("2006-01-02 15:04:05")))
+					progress, kr.Score, kr.Weight))
+				if t := parseMilliTimestamp(kr.ProgressRateLastUpdated); t > 0 {
+					b.WriteString(fmt.Sprintf("    最近更新: %s\n", time.Unix(t, 0).Format("2006-01-02 15:04:05")))
 				}
 			}
 		}

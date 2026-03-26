@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Evaluation represents a stored evaluation record.
+// Evaluation 表示已存储的评估记录。
 type Evaluation struct {
 	ID         int64
 	UserID     string
@@ -14,7 +14,7 @@ type Evaluation struct {
 	CreatedAt  time.Time
 }
 
-// SaveEvaluation stores an evaluation result.
+// SaveEvaluation 存储评估结果。
 func (s *Store) SaveEvaluation(ctx context.Context, userID, evaluation string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO evaluation_history (user_id, evaluation) VALUES (?, ?)`,
@@ -25,7 +25,7 @@ func (s *Store) SaveEvaluation(ctx context.Context, userID, evaluation string) e
 	return nil
 }
 
-// GetEvaluations returns recent evaluations for a user.
+// GetEvaluations 返回用户最近的评估记录。
 func (s *Store) GetEvaluations(ctx context.Context, userID string, limit int) ([]Evaluation, error) {
 	if limit <= 0 {
 		limit = 5

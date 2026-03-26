@@ -10,7 +10,7 @@ import (
 	"okr-agent/memory"
 )
 
-// --- get_user_okrs ---
+// --- get_user_okrs 获取用户 OKR ---
 
 type GetUserOKRsTool struct {
 	feishu *feishu.Client
@@ -56,7 +56,7 @@ func (t *GetUserOKRsTool) Execute(ctx context.Context, input json.RawMessage) (s
 
 	formatted := feishu.FormatOKRForEvaluation(okrData)
 
-	// Auto-save snapshot for trend analysis
+	// 自动保存快照，用于趋势分析
 	month := params.Month
 	if month == "" {
 		month = time.Now().Format("2006-01")
@@ -68,7 +68,7 @@ func (t *GetUserOKRsTool) Execute(ctx context.Context, input json.RawMessage) (s
 	return formatted, nil
 }
 
-// --- get_okr_history ---
+// --- get_okr_history 获取 OKR 历史 ---
 
 type GetOKRHistoryTool struct {
 	store  *memory.Store
@@ -123,7 +123,7 @@ func (t *GetOKRHistoryTool) Execute(ctx context.Context, input json.RawMessage) 
 	return result, nil
 }
 
-// --- compare_okr_periods ---
+// --- compare_okr_periods 对比 OKR 时间段 ---
 
 type CompareOKRPeriodsTool struct {
 	feishu *feishu.Client

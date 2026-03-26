@@ -8,7 +8,7 @@ import (
 	"okr-agent/feishu"
 )
 
-// --- list_team_members ---
+// --- list_team_members 列出团队成员 ---
 
 type ListTeamMembersTool struct {
 	feishu        *feishu.Client

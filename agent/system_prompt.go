@@ -35,7 +35,7 @@ const baseSystemPrompt = `你是 OKR 教练助手，一个专业的 OKR 管理 A
 - 回复应当简洁有价值，避免空洞的套话
 - 如果数据不足，主动告知用户并建议下一步操作`
 
-// BuildSystemPrompt constructs the system prompt with dynamic context.
+// BuildSystemPrompt 使用动态上下文构建系统提示词。
 func BuildSystemPrompt(uc *memory.UserContext) string {
 	prompt := baseSystemPrompt
 	prompt += fmt.Sprintf("\n\n## 当前信息\n- 当前日期：%s", time.Now().Format("2006-01-02"))

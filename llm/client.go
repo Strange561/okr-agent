@@ -1,4 +1,4 @@
-package claude
+package llm
 
 import (
 	"bytes"
@@ -11,16 +11,16 @@ import (
 
 const defaultAPIVersion = "2025-04-01-preview"
 
-// Client is an HTTP client for the Azure OpenAI chat completion API.
+// Client 是 Azure OpenAI 聊天补全 API 的 HTTP 客户端。
 type Client struct {
-	endpoint   string // e.g. https://xxx.openai.azure.com
+	endpoint   string // 例如 https://xxx.openai.azure.com
 	apiKey     string
 	deployment string
 	apiVersion string
 	http       *http.Client
 }
 
-// NewClient creates a new Azure OpenAI client.
+// NewClient 创建一个新的 Azure OpenAI 客户端。
 func NewClient(endpoint, apiKey, deployment string) *Client {
 	return &Client{
 		endpoint:   endpoint,
@@ -31,12 +31,12 @@ func NewClient(endpoint, apiKey, deployment string) *Client {
 	}
 }
 
-// Deployment returns the configured deployment name.
+// Deployment 返回配置的部署名称。
 func (c *Client) Deployment() string {
 	return c.deployment
 }
 
-// CreateMessage sends a chat completion request to Azure OpenAI.
+// CreateMessage 向 Azure OpenAI 发送聊天补全请求。
 func (c *Client) CreateMessage(ctx context.Context, req Request) (*Response, error) {
 	payload, err := json.Marshal(req)
 	if err != nil {

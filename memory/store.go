@@ -9,14 +9,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Store manages SQLite-backed persistent storage.
+// Store 管理基于 SQLite 的持久化存储。
 type Store struct {
 	db *sql.DB
 }
 
-// NewStore opens (or creates) the SQLite database and runs migrations.
+// NewStore 打开（或创建）SQLite 数据库并执行迁移。
 func NewStore(dbPath string) (*Store, error) {
-	// Ensure parent directory exists
+	// 确保父目录存在
 	if dir := filepath.Dir(dbPath); dir != "" {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return nil, fmt.Errorf("create data dir: %w", err)
@@ -28,7 +28,7 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	// WAL mode + single connection for concurrency safety
+	// WAL 模式 + 单连接，确保并发安全
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
@@ -44,7 +44,7 @@ func NewStore(dbPath string) (*Store, error) {
 	return s, nil
 }
 
-// Close closes the database connection.
+// Close 关闭数据库连接。
 func (s *Store) Close() error {
 	return s.db.Close()
 }

@@ -1,6 +1,6 @@
 package agent
 
-// RunResult contains the outcome of an agent run.
+// RunResult 包含 Agent 运行的结果。
 type RunResult struct {
 	Response  string
 	ToolCalls int

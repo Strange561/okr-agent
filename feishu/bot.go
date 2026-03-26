@@ -13,26 +13,26 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
-// MentionedUser holds info about a mentioned user.
+// MentionedUser 保存被提及用户的信息。
 type MentionedUser struct {
 	OpenID string
 	Name   string
 }
 
-// MessageHandler processes any incoming message and returns a response.
+// MessageHandler 处理任意接收到的消息并返回响应。
 type MessageHandler func(ctx context.Context, senderID string, mentionedUsers []MentionedUser, text string) string
 
-// Bot handles Feishu bot events via WebSocket.
+// Bot 通过 WebSocket 处理飞书机器人事件。
 type Bot struct {
 	client  *Client
 	handler MessageHandler
 
-	// Dedup: track processed message IDs to avoid retries
+	// 去重：跟踪已处理的消息 ID，避免重复处理
 	seen   map[string]bool
 	seenMu sync.Mutex
 }
 
-// NewBot creates a new Bot instance.
+// NewBot 创建一个新的 Bot 实例。
 func NewBot(client *Client) *Bot {
 	return &Bot{
 		client: client,
@@ -40,17 +40,17 @@ func NewBot(client *Client) *Bot {
 	}
 }
 
-// SetHandler sets the single message handler that routes all messages to the agent.
+// SetHandler 设置消息处理函数，将所有消息路由到 Agent。
 func (b *Bot) SetHandler(handler MessageHandler) {
 	b.handler = handler
 }
 
-// messageContent represents the JSON content of a received message.
+// messageContent 表示接收到的消息的 JSON 内容。
 type messageContent struct {
 	Text string `json:"text"`
 }
 
-// Start begins WebSocket long-polling for bot events.
+// Start 启动 WebSocket 长轮询以接收机器人事件。
 func (b *Bot) Start() error {
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -72,7 +72,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 		return
 	}
 
-	// Dedup by event_id
+	// 通过 event_id 去重
 	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
 		eventID := event.EventV2Base.Header.EventID
 		b.seenMu.Lock()
@@ -96,7 +96,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 		return
 	}
 
-	// Parse message content
+	// 解析消息内容
 	var content messageContent
 	if msg.Content != nil {
 		if err := json.Unmarshal([]byte(*msg.Content), &content); err != nil {
@@ -109,7 +109,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 	text = cleanMentions(text)
 	text = strings.TrimSpace(text)
 
-	// Extract mentioned users
+	// 提取被提及的用户
 	var mentionedUsers []MentionedUser
 	if msg.Mentions != nil {
 		for _, mention := range msg.Mentions {
@@ -130,7 +130,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 		return
 	}
 
-	// Enrich text with mention information so the agent knows who was mentioned
+	// 将提及信息添加到文本中，以便 Agent 知道谁被提及
 	enrichedText := text
 	if len(mentionedUsers) > 0 {
 		var mentions []string
@@ -153,7 +153,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 	}
 }
 
-// cleanMentions removes @_user_N patterns from text.
+// cleanMentions 从文本中移除 @_user_N 格式的内容。
 func cleanMentions(text string) string {
 	words := strings.Fields(text)
 	var cleaned []string

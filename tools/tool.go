@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 )
 
-// Tool defines the interface for agent tools.
+// Tool 定义 Agent 工具的接口。
 type Tool interface {
 	Name() string
 	Description() string

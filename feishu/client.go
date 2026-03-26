@@ -4,14 +4,14 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
 
-// Client wraps the Lark SDK client.
+// Client 封装飞书 Lark SDK 客户端。
 type Client struct {
 	LarkClient *lark.Client
 	AppID      string
 	AppSecret  string
 }
 
-// NewClient creates a new Feishu client. The SDK automatically manages tenant_access_token.
+// NewClient 创建一个新的飞书客户端。SDK 自动管理 tenant_access_token。
 func NewClient(appID, appSecret string) *Client {
 	larkClient := lark.NewClient(appID, appSecret)
 	return &Client{

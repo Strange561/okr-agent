@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// UserContext holds user preferences and agent-maintained notes.
+// UserContext 保存用户偏好和 Agent 维护的备注信息。
 type UserContext struct {
 	UserID            string
 	Language          string
@@ -16,7 +16,7 @@ type UserContext struct {
 	LastInteraction   *time.Time
 }
 
-// GetUserContext loads user context. Returns defaults if not found.
+// GetUserContext 加载用户上下文。如果未找到则返回默认值。
 func (s *Store) GetUserContext(ctx context.Context, userID string) (*UserContext, error) {
 	uc := &UserContext{
 		UserID:            userID,
@@ -31,10 +31,10 @@ func (s *Store) GetUserContext(ctx context.Context, userID string) (*UserContext
 	).Scan(&uc.Language, &uc.ReminderFrequency, &uc.AgentNotes, &lastInteraction)
 
 	if err == sql.ErrNoRows {
-		return uc, nil // return defaults
+		return uc, nil // 返回默认值
 	}
 	if err != nil {
-		return uc, nil // return defaults on error too
+		return uc, nil // 出错时也返回默认值
 	}
 
 	if lastInteraction.Valid {
@@ -43,7 +43,7 @@ func (s *Store) GetUserContext(ctx context.Context, userID string) (*UserContext
 	return uc, nil
 }
 
-// SaveUserContext persists user context.
+// SaveUserContext 持久化用户上下文。
 func (s *Store) SaveUserContext(ctx context.Context, uc *UserContext) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_context (user_id, language, reminder_frequency, agent_notes, last_interaction, updated_at)
@@ -61,7 +61,7 @@ func (s *Store) SaveUserContext(ctx context.Context, uc *UserContext) error {
 	return nil
 }
 
-// TouchUserInteraction updates the last_interaction timestamp.
+// TouchUserInteraction 更新最后交互时间戳。
 func (s *Store) TouchUserInteraction(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_context (user_id, last_interaction, updated_at) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -70,7 +70,7 @@ func (s *Store) TouchUserInteraction(ctx context.Context, userID string) error {
 	return err
 }
 
-// SchedulerState holds per-user scheduling state.
+// SchedulerState 保存每个用户的调度状态。
 type SchedulerState struct {
 	UserID          string
 	LastCheck       *time.Time
@@ -79,7 +79,7 @@ type SchedulerState struct {
 	LastReminder    *time.Time
 }
 
-// GetSchedulerState loads the scheduler state for a user.
+// GetSchedulerState 加载用户的调度状态。
 func (s *Store) GetSchedulerState(ctx context.Context, userID string) (*SchedulerState, error) {
 	ss := &SchedulerState{UserID: userID, RiskLevel: "normal"}
 
@@ -90,7 +90,7 @@ func (s *Store) GetSchedulerState(ctx context.Context, userID string) (*Schedule
 	).Scan(&lastCheck, &ss.RiskLevel, &ss.DaysSinceUpdate, &lastReminder)
 
 	if err != nil {
-		return ss, nil // defaults
+		return ss, nil // 返回默认值
 	}
 	if lastCheck.Valid {
 		ss.LastCheck = &lastCheck.Time
@@ -101,7 +101,7 @@ func (s *Store) GetSchedulerState(ctx context.Context, userID string) (*Schedule
 	return ss, nil
 }
 
-// SaveSchedulerState persists scheduler state.
+// SaveSchedulerState 持久化调度状态。
 func (s *Store) SaveSchedulerState(ctx context.Context, ss *SchedulerState) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO scheduler_state (user_id, last_check, risk_level, days_since_update, last_reminder, updated_at)
@@ -119,7 +119,7 @@ func (s *Store) SaveSchedulerState(ctx context.Context, ss *SchedulerState) erro
 	return nil
 }
 
-// UpdateReminderTime marks that a reminder was sent.
+// UpdateReminderTime 标记提醒已发送。
 func (s *Store) UpdateReminderTime(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO scheduler_state (user_id, last_reminder, updated_at) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

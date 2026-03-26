@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"okr-agent/claude"
+	"okr-agent/llm"
 	"okr-agent/memory"
 	"okr-agent/tools"
 )
@@ -17,47 +17,47 @@ const (
 	MaxTokens       = 4096
 )
 
-// Agent implements the ReAct loop with tool calling.
+// Agent 实现带有工具调用的 ReAct 循环。
 type Agent struct {
-	claude   *claude.Client
+	llm      *llm.Client
 	registry *tools.Registry
 	store    *memory.Store
 }
 
-// New creates a new Agent.
-func New(claudeClient *claude.Client, registry *tools.Registry, store *memory.Store) *Agent {
+// New 创建一个新的 Agent。
+func New(llmClient *llm.Client, registry *tools.Registry, store *memory.Store) *Agent {
 	return &Agent{
-		claude:   claudeClient,
+		llm:      llmClient,
 		registry: registry,
 		store:    store,
 	}
 }
 
-// Run executes the agent loop with conversation history for the given user.
+// Run 为指定用户执行带有对话历史的 Agent 循环。
 func (a *Agent) Run(ctx context.Context, userID, text string) (*RunResult, error) {
-	// Load existing conversation
+	// 加载现有对话
 	conversation, err := a.store.GetConversation(ctx, userID)
 	if err != nil {
 		log.Printf("Warning: failed to load conversation for %s: %v", userID, err)
 	}
 	if conversation == nil {
-		conversation = []claude.Message{}
+		conversation = []llm.Message{}
 	}
 
-	// Append user message
-	conversation = append(conversation, claude.Message{Role: "user", Content: text})
+	// 追加用户消息
+	conversation = append(conversation, llm.Message{Role: "user", Content: text})
 
-	// Build system prompt with user context
+	// 使用用户上下文构建系统提示词
 	uc, _ := a.store.GetUserContext(ctx, userID)
 	systemPrompt := BuildSystemPrompt(uc)
 
-	// Run the ReAct loop
+	// 执行 ReAct 循环
 	result, err := a.reactLoop(ctx, systemPrompt, conversation)
 	if err != nil {
 		return nil, err
 	}
 
-	// Save conversation
+	// 保存对话
 	if saveErr := a.store.SaveConversation(ctx, userID, conversation); saveErr != nil {
 		log.Printf("Warning: failed to save conversation for %s: %v", userID, saveErr)
 	}
@@ -67,32 +67,32 @@ func (a *Agent) Run(ctx context.Context, userID, text string) (*RunResult, error
 	return result, nil
 }
 
-// RunOneShot executes the agent loop without conversation persistence.
+// RunOneShot 执行不保存对话的一次性 Agent 循环。
 func (a *Agent) RunOneShot(ctx context.Context, text string) (*RunResult, error) {
-	messages := []claude.Message{{Role: "user", Content: text}}
+	messages := []llm.Message{{Role: "user", Content: text}}
 	systemPrompt := BuildSystemPrompt(nil)
 	return a.reactLoop(ctx, systemPrompt, messages)
 }
 
-// reactLoop is the core ReAct loop shared by Run and RunOneShot.
-func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []claude.Message) (*RunResult, error) {
+// reactLoop 是 Run 和 RunOneShot 共用的核心 ReAct 循环。
+func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []llm.Message) (*RunResult, error) {
 	toolParams := a.registry.GetToolParams()
 	totalToolCalls := 0
 
 	for i := 0; i < MaxIterations; i++ {
-		// Truncate and prepend system message
+		// 截断历史并在前面添加系统消息
 		truncated := truncateHistory(messages, MaxHistoryTurns)
-		allMessages := make([]claude.Message, 0, len(truncated)+1)
-		allMessages = append(allMessages, claude.Message{Role: "system", Content: systemPrompt})
+		allMessages := make([]llm.Message, 0, len(truncated)+1)
+		allMessages = append(allMessages, llm.Message{Role: "system", Content: systemPrompt})
 		allMessages = append(allMessages, truncated...)
 
-		req := claude.Request{
+		req := llm.Request{
 			MaxCompletionTokens: MaxTokens,
 			Messages:  allMessages,
 			Tools:     toolParams,
 		}
 
-		resp, err := a.claude.CreateMessage(ctx, req)
+		resp, err := a.llm.CreateMessage(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("azure openai API call: %w", err)
 		}
@@ -101,7 +101,7 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []c
 		log.Printf("LLM response: finish_reason=%s, tool_calls=%d, usage=%+v",
 			choice.FinishReason, len(choice.Message.ToolCalls), resp.Usage)
 
-		// Append assistant message to conversation
+		// 将助手消息追加到对话中
 		messages = append(messages, choice.Message)
 
 		if choice.FinishReason == "stop" || choice.FinishReason == "length" {
@@ -124,7 +124,7 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []c
 					content = fmt.Sprintf("Error: %s", execErr.Error())
 				}
 
-				messages = append(messages, claude.Message{
+				messages = append(messages, llm.Message{
 					Role:       "tool",
 					ToolCallID: tc.ID,
 					Content:    content,
@@ -133,7 +133,7 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []c
 			continue
 		}
 
-		// Unknown finish_reason — return what we have
+		// 未知的 finish_reason — 返回当前已有的内容
 		log.Printf("Unknown finish_reason: %s", choice.FinishReason)
 		return &RunResult{
 			Response:  extractText(choice.Message),
@@ -147,14 +147,14 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []c
 	}, nil
 }
 
-func extractText(msg claude.Message) string {
+func extractText(msg llm.Message) string {
 	if msg.Content != "" {
 		return msg.Content
 	}
 	return "(Agent 没有生成文本回复)"
 }
 
-func truncateHistory(messages []claude.Message, maxTurns int) []claude.Message {
+func truncateHistory(messages []llm.Message, maxTurns int) []llm.Message {
 	maxMessages := maxTurns * 2
 	if len(messages) <= maxMessages {
 		return messages

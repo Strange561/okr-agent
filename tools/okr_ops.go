@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 )
 
-// UpdateOKRProgressTool is a stub — the Feishu OKR API has no public write endpoint.
-// It guides the user to update OKR progress manually in Feishu.
+// UpdateOKRProgressTool 是一个桩实现 — 飞书 OKR API 没有公开的写入接口。
+// 它引导用户在飞书中手动更新 OKR 进度。
 type UpdateOKRProgressTool struct {
 	schema json.RawMessage
 }

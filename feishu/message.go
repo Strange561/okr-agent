@@ -8,7 +8,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-// SendTextMessage sends a text message to a user via private chat.
+// SendTextMessage 通过私聊向用户发送文本消息。
 func (c *Client) SendTextMessage(ctx context.Context, userID, text string) error {
 	content, _ := json.Marshal(map[string]string{"text": text})
 
@@ -32,7 +32,7 @@ func (c *Client) SendTextMessage(ctx context.Context, userID, text string) error
 	return nil
 }
 
-// SendRichMessage sends a rich text (post) message to a user.
+// SendRichMessage 向用户发送富文本（post）消息。
 func (c *Client) SendRichMessage(ctx context.Context, userID, title, contentText string) error {
 	post := map[string]interface{}{
 		"zh_cn": map[string]interface{}{

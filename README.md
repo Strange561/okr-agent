@@ -36,13 +36,13 @@
 
 ```
 okr-agent/
-├── main.go                     # 入口：初始化 store → llm → tools → agent → scheduler → bot
+├── main.go                     # 入口：初始化 store → LLM → tools → agent → scheduler → bot
 ├── config/config.go            # 配置加载（.env / 环境变量）
 ├── agent/
 │   ├── agent.go                # ReAct 循环核心（Run + RunOneShot）
 │   ├── types.go                # RunResult 类型
 │   └── system_prompt.go        # OKR 教练系统提示词
-├── claude/
+├── llm/
 │   ├── client.go               # Azure OpenAI Chat Completion HTTP 客户端
 │   └── types.go                # Request/Response/Tool 类型定义
 ├── tools/

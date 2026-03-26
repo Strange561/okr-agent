@@ -14,7 +14,7 @@ import (
 	"okr-agent/memory"
 )
 
-// Scheduler manages cron-based OKR checking with agent-driven intelligence.
+// Scheduler 管理基于 cron 的 OKR 检查，由 Agent 驱动智能决策。
 type Scheduler struct {
 	cron   *cron.Cron
 	feishu *feishu.Client
@@ -23,7 +23,7 @@ type Scheduler struct {
 	config *config.Config
 }
 
-// New creates a new Scheduler.
+// New 创建一个新的调度器。
 func New(fc *feishu.Client, ag *agent.Agent, store *memory.Store, cfg *config.Config) *Scheduler {
 	return &Scheduler{
 		cron:   cron.New(),
@@ -34,9 +34,9 @@ func New(fc *feishu.Client, ag *agent.Agent, store *memory.Store, cfg *config.Co
 	}
 }
 
-// Start begins the cron scheduler.
+// Start 启动 cron 调度器。
 func (s *Scheduler) Start() error {
-	// Main OKR check (configurable, default: Monday 9:00)
+	// 主 OKR 检查（可配置，默认：周一 9:00）
 	_, err := s.cron.AddFunc(s.config.CronSchedule, func() {
 		s.RunCheck()
 	})
@@ -44,7 +44,7 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
-	// Daily risk scan at 10:00
+	// 每日风险扫描，10:00 执行
 	_, err = s.cron.AddFunc("0 10 * * *", func() {
 		s.DailyRiskScan()
 	})
@@ -52,7 +52,7 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
-	// Friday reminder at 10:00
+	// 周五提醒，10:00 执行
 	_, err = s.cron.AddFunc("0 10 * * 5", func() {
 		s.SendReminder()
 	})
@@ -67,12 +67,12 @@ func (s *Scheduler) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the scheduler.
+// Stop 优雅地停止调度器。
 func (s *Scheduler) Stop() {
 	s.cron.Stop()
 }
 
-// RunCheck performs agent-driven OKR evaluation for all configured users.
+// RunCheck 对所有配置的用户执行 Agent 驱动的 OKR 评估。
 func (s *Scheduler) RunCheck() {
 	ctx := context.Background()
 
@@ -104,7 +104,7 @@ func (s *Scheduler) RunCheck() {
 	log.Println("OKR check completed")
 }
 
-// DailyRiskScan checks all users' OKR update times and triggers personalized reminders.
+// DailyRiskScan 检查所有用户的 OKR 更新时间，并触发个性化提醒。
 func (s *Scheduler) DailyRiskScan() {
 	ctx := context.Background()
 
@@ -122,7 +122,7 @@ func (s *Scheduler) DailyRiskScan() {
 			name = u.OpenID
 		}
 
-		// Fetch OKR data to check last update time
+		// 获取 OKR 数据以检查最后更新时间
 		okrData, err := s.feishu.GetUserOKRs(ctx, u.OpenID, "")
 		if err != nil {
 			log.Printf("Risk scan: error fetching OKR for %s: %v", name, err)
@@ -134,10 +134,10 @@ func (s *Scheduler) DailyRiskScan() {
 		if lastModified > 0 {
 			daysSinceUpdate = int(time.Since(time.Unix(lastModified, 0)).Hours() / 24)
 		} else {
-			daysSinceUpdate = 999 // never updated
+			daysSinceUpdate = 999 // 从未更新
 		}
 
-		// Determine risk level
+		// 判断风险等级
 		riskLevel := "normal"
 		switch {
 		case daysSinceUpdate >= 21:
@@ -148,25 +148,25 @@ func (s *Scheduler) DailyRiskScan() {
 			riskLevel = "normal"
 		}
 
-		// Save state
+		// 保存状态
 		state := &memory.SchedulerState{
 			UserID:          u.OpenID,
 			RiskLevel:       riskLevel,
 			DaysSinceUpdate: daysSinceUpdate,
 		}
 
-		// Check if we should send a reminder
+		// 检查是否需要发送提醒
 		existingState, _ := s.store.GetSchedulerState(ctx, u.OpenID)
 		shouldRemind := false
 
 		switch riskLevel {
 		case "critical":
-			// Always remind for critical
+			// 危急状态始终发送提醒
 			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > 24*time.Hour {
 				shouldRemind = true
 			}
 		case "high":
-			// Remind if not reminded in last 3 days
+			// 如果最近 3 天内未提醒则发送提醒
 			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > 3*24*time.Hour {
 				shouldRemind = true
 			}
@@ -197,7 +197,7 @@ func (s *Scheduler) DailyRiskScan() {
 	log.Println("Daily risk scan completed")
 }
 
-// SendReminder sends a standard Friday reminder to all users.
+// SendReminder 向所有用户发送标准的周五提醒。
 func (s *Scheduler) SendReminder() {
 	ctx := context.Background()
 

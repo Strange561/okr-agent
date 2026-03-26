@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// OKRData represents a user's OKR data.
+// OKRData 表示用户的 OKR 数据。
 type OKRData struct {
 	UserID     string      `json:"user_id"`
 	OKRList    []OKRItem   `json:"okr_list"`
 	FetchedAt  time.Time   `json:"fetched_at"`
 }
 
-// OKRItem represents a single OKR (one Objective with its Key Results).
+// OKRItem 表示单个 OKR（一个 Objective 及其 Key Results）。
 type OKRItem struct {
 	ID            string      `json:"id"`
 	Name          string      `json:"name"`
@@ -58,7 +58,7 @@ type Mention struct {
 	Name string `json:"name"`
 }
 
-// okrAPIResponse represents the raw API response.
+// okrAPIResponse 表示原始 API 响应。
 type okrAPIResponse struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
@@ -67,8 +67,8 @@ type okrAPIResponse struct {
 	} `json:"data"`
 }
 
-// GetUserOKRs fetches OKR data for a given user.
-// month: target month in "2006-01" format, empty string means current month.
+// GetUserOKRs 获取指定用户的 OKR 数据。
+// month: 目标月份，格式为 "2006-01"，空字符串表示当前月份。
 func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (*OKRData, error) {
 	token, err := c.getTenantAccessToken(ctx)
 	if err != nil {
@@ -105,7 +105,7 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (
 		return nil, fmt.Errorf("OKR API error: code=%d msg=%s", apiResp.Code, apiResp.Msg)
 	}
 
-	// Month filter: e.g. "2026-03"
+	// 月份过滤：例如 "2026-03"
 	targetMonth := month
 	if targetMonth == "" {
 		targetMonth = time.Now().Format("2006-01")
@@ -117,7 +117,7 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, fmt.Errorf("unmarshal OKR item: %w", err)
 		}
-		// Only keep OKRs matching the target month
+		// 只保留匹配目标月份的 OKR
 		if item.Name != "" && !isCurrentMonthPeriod(item.Name, targetMonth) {
 			continue
 		}
@@ -131,7 +131,7 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (
 	}, nil
 }
 
-// tokenResponse represents the tenant access token response.
+// tokenResponse 表示租户访问令牌的响应。
 type tokenResponse struct {
 	Code              int    `json:"code"`
 	Msg               string `json:"msg"`
@@ -139,7 +139,7 @@ type tokenResponse struct {
 	Expire            int    `json:"expire"`
 }
 
-// getTenantAccessToken obtains a tenant access token from Feishu.
+// getTenantAccessToken 从飞书获取租户访问令牌。
 func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
 	payload := fmt.Sprintf(`{"app_id":"%s","app_secret":"%s"}`, c.AppID, c.AppSecret)
 
@@ -174,13 +174,13 @@ func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
 	return tokenResp.TenantAccessToken, nil
 }
 
-// isCurrentMonthPeriod checks if a period name matches the current month.
-// Handles formats like "3月", "3 月", "2026 年 3 月", "2026-03" etc.
+// isCurrentMonthPeriod 检查周期名称是否匹配当前月份。
+// 支持 "3月"、"3 月"、"2026 年 3 月"、"2026-03" 等格式。
 func isCurrentMonthPeriod(periodName, currentMonth string) bool {
 	if periodName == "" {
 		return true
 	}
-	// Remove all spaces for easier matching
+	// 移除所有空格以便于匹配
 	name := strings.ReplaceAll(periodName, " ", "")
 
 	parts := strings.Split(currentMonth, "-")
@@ -188,21 +188,21 @@ func isCurrentMonthPeriod(periodName, currentMonth string) bool {
 		return true
 	}
 	year := parts[0]
-	monthNum := strings.TrimLeft(parts[1], "0") // "03" -> "3"
+	monthNum := strings.TrimLeft(parts[1], "0") // "03" -> "3"，去掉前导零
 
-	// Match year + month like "2026年3月"
+	// 匹配年+月格式，如 "2026年3月"
 	if strings.Contains(name, year) && strings.Contains(name, monthNum+"月") {
 		return true
 	}
-	// Match "2026-03"
+	// 匹配 "2026-03" 格式
 	if strings.Contains(name, currentMonth) {
 		return true
 	}
 	return false
 }
 
-// CheckUpdateStatus checks if an OKR has been updated within the last 7 days.
-// Returns true if outdated (not updated in 7+ days).
+// IsOutdated 检查 OKR 是否在最近 7 天内有更新。
+// 如果超过 7 天未更新则返回 true。
 func IsOutdated(modifiedTime int64) bool {
 	if modifiedTime == 0 {
 		return true
@@ -210,7 +210,7 @@ func IsOutdated(modifiedTime int64) bool {
 	return time.Since(time.Unix(modifiedTime, 0)) > 7*24*time.Hour
 }
 
-// parseMilliTimestamp parses a millisecond timestamp string to unix seconds.
+// parseMilliTimestamp 将毫秒时间戳字符串解析为 Unix 秒数。
 func parseMilliTimestamp(s string) int64 {
 	if s == "" || s == "0" {
 		return 0
@@ -220,7 +220,7 @@ func parseMilliTimestamp(s string) int64 {
 	return ms / 1000
 }
 
-// LatestModifiedTime returns the most recent modified time (unix seconds) across all objectives and KRs.
+// LatestModifiedTime 返回所有 Objective 和 KR 中最近的修改时间（Unix 秒数）。
 func LatestModifiedTime(okr *OKRData) int64 {
 	var latest int64
 	for _, item := range okr.OKRList {
@@ -242,7 +242,7 @@ func LatestModifiedTime(okr *OKRData) int64 {
 	return latest
 }
 
-// FormatOKRForEvaluation converts OKR data into a readable string for Claude evaluation.
+// FormatOKRForEvaluation 将 OKR 数据转换为可读字符串，供 LLM 进行评估。
 func FormatOKRForEvaluation(data *OKRData) string {
 	if data == nil || len(data.OKRList) == 0 {
 		return "该用户当前没有 OKR 数据。"

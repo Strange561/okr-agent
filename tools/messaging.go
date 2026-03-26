@@ -9,7 +9,7 @@ import (
 	"okr-agent/feishu"
 )
 
-// --- send_message ---
+// --- send_message 发送消息 ---
 
 type SendMessageTool struct {
 	feishu *feishu.Client
@@ -53,7 +53,7 @@ func (t *SendMessageTool) Execute(ctx context.Context, input json.RawMessage) (s
 	return fmt.Sprintf("消息已发送给用户 %s", params.UserID), nil
 }
 
-// --- send_reminder ---
+// --- send_reminder 发送提醒 ---
 
 type SendReminderTool struct {
 	feishu *feishu.Client
@@ -102,7 +102,7 @@ func (t *SendReminderTool) Execute(ctx context.Context, input json.RawMessage) (
 	return fmt.Sprintf("提醒已发送给用户 %s", params.UserID), nil
 }
 
-// --- send_team_notification ---
+// --- send_team_notification 发送团队通知 ---
 
 type SendTeamNotificationTool struct {
 	feishu        *feishu.Client

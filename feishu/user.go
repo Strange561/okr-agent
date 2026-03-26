@@ -8,13 +8,13 @@ import (
 	larkcontact "github.com/larksuite/oapi-sdk-go/v3/service/contact/v3"
 )
 
-// UserInfo holds a user's open_id and name.
+// UserInfo 保存用户的 open_id 和姓名。
 type UserInfo struct {
 	OpenID string
 	Name   string
 }
 
-// GetDepartmentUsers fetches users (open_id + name) from a department.
+// GetDepartmentUsers 从部门获取用户（open_id + 姓名）。
 func (c *Client) GetDepartmentUsers(ctx context.Context, departmentID string) ([]UserInfo, error) {
 	var users []UserInfo
 	pageToken := ""
@@ -57,7 +57,7 @@ func (c *Client) GetDepartmentUsers(ctx context.Context, departmentID string) ([
 	return users, nil
 }
 
-// GetSubDepartmentIDs fetches all child department IDs recursively.
+// GetSubDepartmentIDs 递归获取所有子部门 ID。
 func (c *Client) GetSubDepartmentIDs(ctx context.Context, parentDeptID string) ([]string, error) {
 	var allDepts []string
 	pageToken := ""
@@ -103,8 +103,8 @@ func (c *Client) GetSubDepartmentIDs(ctx context.Context, parentDeptID string) (
 	return allDepts, nil
 }
 
-// CollectUsers merges static user IDs from config with dynamic ones from departments (recursive).
-// Returns a list of UserInfo with open_id and name.
+// CollectUsers 将配置中的静态用户 ID 与部门中的动态用户（递归获取）合并。
+// 返回包含 open_id 和姓名的 UserInfo 列表。
 func (c *Client) CollectUsers(ctx context.Context, staticIDs, departmentIDs []string) ([]UserInfo, error) {
 	seen := make(map[string]bool)
 	var result []UserInfo

@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -83,7 +84,7 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
@@ -94,7 +95,12 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 
-	log.Printf("OKR API response: %s", string(body))
+	// 只记录前 500 字节，避免日志过大
+	preview := string(body)
+	if len(preview) > 500 {
+		preview = preview[:500] + "...(truncated)"
+	}
+	log.Printf("OKR API response (len=%d): %s", len(body), preview)
 
 	var apiResp okrAPIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
@@ -131,6 +137,12 @@ func (c *Client) GetUserOKRs(ctx context.Context, userID string, month string) (
 	}, nil
 }
 
+// tokenRequest 用于获取租户访问令牌的请求体。
+type tokenRequest struct {
+	AppID     string `json:"app_id"`
+	AppSecret string `json:"app_secret"`
+}
+
 // tokenResponse 表示租户访问令牌的响应。
 type tokenResponse struct {
 	Code              int    `json:"code"`
@@ -141,17 +153,21 @@ type tokenResponse struct {
 
 // getTenantAccessToken 从飞书获取租户访问令牌。
 func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
-	payload := fmt.Sprintf(`{"app_id":"%s","app_secret":"%s"}`, c.AppID, c.AppSecret)
+	// 使用 json.Marshal 构造请求体，避免 fmt.Sprintf 拼接密钥
+	payload, err := json.Marshal(tokenRequest{AppID: c.AppID, AppSecret: c.AppSecret})
+	if err != nil {
+		return "", fmt.Errorf("marshal token request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		"https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-		strings.NewReader(payload))
+		bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}

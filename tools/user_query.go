@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"okr-agent/feishu"
 )
@@ -39,13 +40,14 @@ func (t *ListTeamMembersTool) Execute(ctx context.Context, _ json.RawMessage) (s
 		return "当前没有配置任何监控用户。", nil
 	}
 
-	result := fmt.Sprintf("团队成员共 %d 人：\n", len(users))
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("团队成员共 %d 人：\n", len(users)))
 	for i, u := range users {
 		name := u.Name
 		if name == "" {
 			name = "(未知)"
 		}
-		result += fmt.Sprintf("%d. %s (open_id: %s)\n", i+1, name, u.OpenID)
+		fmt.Fprintf(&b, "%d. %s (open_id: %s)\n", i+1, name, u.OpenID)
 	}
-	return result, nil
+	return b.String(), nil
 }

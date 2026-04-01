@@ -36,6 +36,12 @@ func New(fc *feishu.Client, ag *agent.Agent, store *memory.Store, cfg *config.Co
 
 // Start 启动 cron 调度器。
 func (s *Scheduler) Start() error {
+	// 预校验 cron 表达式
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	if _, err := parser.Parse(s.config.CronSchedule); err != nil {
+		return fmt.Errorf("invalid cron schedule %q: %w", s.config.CronSchedule, err)
+	}
+
 	// 主 OKR 检查（可配置，默认：周一 9:00）
 	_, err := s.cron.AddFunc(s.config.CronSchedule, func() {
 		s.RunCheck()
@@ -74,7 +80,8 @@ func (s *Scheduler) Stop() {
 
 // RunCheck 对所有配置的用户执行 Agent 驱动的 OKR 评估。
 func (s *Scheduler) RunCheck() {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
 	users, err := s.feishu.CollectUsers(ctx, s.config.OKRUserIDs, s.config.DepartmentIDs)
 	if err != nil {
@@ -106,7 +113,8 @@ func (s *Scheduler) RunCheck() {
 
 // DailyRiskScan 检查所有用户的 OKR 更新时间，并触发个性化提醒。
 func (s *Scheduler) DailyRiskScan() {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
 	users, err := s.feishu.CollectUsers(ctx, s.config.OKRUserIDs, s.config.DepartmentIDs)
 	if err != nil {
@@ -137,15 +145,13 @@ func (s *Scheduler) DailyRiskScan() {
 			daysSinceUpdate = 999 // 从未更新
 		}
 
-		// 判断风险等级
+		// 使用可配置的阈值判断风险等级
 		riskLevel := "normal"
 		switch {
-		case daysSinceUpdate >= 21:
+		case daysSinceUpdate >= s.config.RiskDaysCritical:
 			riskLevel = "critical"
-		case daysSinceUpdate >= 14:
+		case daysSinceUpdate >= s.config.RiskDaysHigh:
 			riskLevel = "high"
-		case daysSinceUpdate >= 7:
-			riskLevel = "normal"
 		}
 
 		// 保存状态
@@ -159,15 +165,16 @@ func (s *Scheduler) DailyRiskScan() {
 		existingState, _ := s.store.GetSchedulerState(ctx, u.OpenID)
 		shouldRemind := false
 
+		criticalCooldown := time.Duration(s.config.RiskCooldownCriticalHours) * time.Hour
+		highCooldown := time.Duration(s.config.RiskCooldownHighHours) * time.Hour
+
 		switch riskLevel {
 		case "critical":
-			// 危急状态始终发送提醒
-			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > 24*time.Hour {
+			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > criticalCooldown {
 				shouldRemind = true
 			}
 		case "high":
-			// 如果最近 3 天内未提醒则发送提醒
-			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > 3*24*time.Hour {
+			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > highCooldown {
 				shouldRemind = true
 			}
 		}
@@ -187,11 +194,15 @@ func (s *Scheduler) DailyRiskScan() {
 			} else {
 				log.Printf("Sent personalized reminder to %s (tool_calls=%d)", name, result.ToolCalls)
 				state.LastReminder = timePtr(time.Now())
-				_ = s.store.UpdateReminderTime(ctx, u.OpenID)
+				if err := s.store.UpdateReminderTime(ctx, u.OpenID); err != nil {
+					log.Printf("Error updating reminder time for %s: %v", name, err)
+				}
 			}
 		}
 
-		_ = s.store.SaveSchedulerState(ctx, state)
+		if err := s.store.SaveSchedulerState(ctx, state); err != nil {
+			log.Printf("Error saving scheduler state for %s: %v", name, err)
+		}
 	}
 
 	log.Println("Daily risk scan completed")
@@ -199,7 +210,8 @@ func (s *Scheduler) DailyRiskScan() {
 
 // SendReminder 向所有用户发送标准的周五提醒。
 func (s *Scheduler) SendReminder() {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
 	users, err := s.feishu.CollectUsers(ctx, s.config.OKRUserIDs, s.config.DepartmentIDs)
 	if err != nil {

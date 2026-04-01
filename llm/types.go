@@ -1,6 +1,6 @@
-// Package llm 封装了与 Azure OpenAI（大语言模型）API 交互所需的类型定义。
+// Package llm 封装了与 LLM（大语言模型）API 交互所需的类型定义。
 //
-// 本包定义了 OpenAI Chat Completions API 的请求/响应数据结构，
+// 本包定义了 Chat Completions API 的请求/响应数据结构，
 // 包括消息（Message）、工具调用（ToolCall）、工具定义（Tool）等。
 // 这些类型是 Agent 与 LLM 通信的基础数据协议。
 //
@@ -70,21 +70,23 @@ type ToolFunction struct {
 	Parameters  json.RawMessage `json:"parameters"`  // JSON Schema 格式的参数定义
 }
 
-// Request 是 Azure OpenAI 聊天补全请求。
+// Request 是 LLM 聊天补全请求。
 //
 // 每次 Agent 循环都会构建一个新的 Request，包含：
+//   - Model：模型名称（如 kimi-k2.5）
 //   - Messages：完整的对话历史（system + user + assistant + tool 消息）
 //   - Tools：当前可用的工具列表
 //   - MaxCompletionTokens：限制回复长度，避免生成过长的内容
 //
 // 注意：Messages 的顺序很重要，system 消息必须在最前面。
 type Request struct {
+	Model               string    `json:"model,omitempty"`                   // 模型名称
 	Messages            []Message `json:"messages"`                          // 对话消息列表，按时间顺序排列
 	Tools               []Tool    `json:"tools,omitempty"`                   // 可用工具列表，LLM 据此决定是否调用工具
 	MaxCompletionTokens int       `json:"max_completion_tokens,omitempty"`   // 最大生成 token 数，防止回复过长
 }
 
-// Response 是 Azure OpenAI 聊天补全响应。
+// Response 是 LLM 聊天补全响应。
 //
 // API 返回的响应中最重要的是 Choices 数组。通常我们只使用第一个 Choice。
 // Usage 字段用于监控 token 消耗，帮助控制成本。

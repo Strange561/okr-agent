@@ -94,7 +94,7 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []l
 
 		resp, err := a.llm.CreateMessage(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("azure openai API call: %w", err)
+			return nil, fmt.Errorf("LLM API call: %w", err)
 		}
 
 		choice := resp.Choices[0]

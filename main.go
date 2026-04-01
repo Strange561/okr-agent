@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"okr-agent/agent"
-	"okr-agent/llm"
 	"okr-agent/config"
 	"okr-agent/feishu"
+	"okr-agent/llm"
 	"okr-agent/memory"
 	"okr-agent/scheduler"
 	"okr-agent/tools"
@@ -23,19 +24,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-
-	if cfg.FeishuAppID == "" || cfg.FeishuAppSecret == "" {
-		log.Fatal("FEISHU_APP_ID and FEISHU_APP_SECRET are required")
-	}
-	if cfg.AzureEndpoint == "" || cfg.AzureAPIKey == "" || cfg.AzureDeployment == "" {
-		log.Fatal("AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_DEPLOYMENT are required")
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Invalid config: %v", err)
 	}
 
 	// 初始化客户端
 	feishuClient := feishu.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret)
-	llmClient := llm.NewClient(cfg.AzureEndpoint, cfg.AzureAPIKey, cfg.AzureDeployment)
+	llmClient := llm.NewClient(cfg.LLMEndpoint, cfg.LLMAPIKey, cfg.LLMModel)
 
-	log.Printf("Using Azure OpenAI deployment: %s", llmClient.Deployment())
+	log.Printf("Using LLM model: %s", llmClient.Model())
 
 	// 初始化内存存储
 	store, err := memory.NewStore(cfg.SQLitePath)
@@ -56,6 +53,11 @@ func main() {
 	registry.Register(tools.NewSendTeamNotificationTool(feishuClient, cfg.OKRUserIDs, cfg.DepartmentIDs))
 	registry.Register(tools.NewListTeamMembersTool(feishuClient, cfg.OKRUserIDs, cfg.DepartmentIDs))
 	registry.Register(tools.NewUpdateOKRProgressTool())
+	registry.Register(tools.NewListDocCommentsTool(feishuClient))
+	registry.Register(tools.NewGetDocContentTool(feishuClient))
+	registry.Register(tools.NewListDocBlocksTool(feishuClient))
+	registry.Register(tools.NewUpdateDocBlockTool(feishuClient))
+	registry.Register(tools.NewReplyDocCommentTool(feishuClient))
 
 	// 创建 Agent
 	ag := agent.New(llmClient, registry, store)
@@ -68,8 +70,7 @@ func main() {
 	defer sched.Stop()
 
 	// 设置机器人的 Agent 处理函数
-	bot := feishu.NewBot(feishuClient)
-	bot.SetHandler(func(ctx context.Context, senderID string, _ []feishu.MentionedUser, text string) string {
+	bot := feishu.NewBot(feishuClient, func(ctx context.Context, senderID string, _ []feishu.MentionedUser, text string) string {
 		result, err := ag.Run(ctx, senderID, text)
 		if err != nil {
 			log.Printf("Agent error for user %s: %v", senderID, err)
@@ -84,6 +85,21 @@ func main() {
 		}
 	}()
 
+	// 启动健康检查 HTTP 端点
+	if cfg.HealthPort != "" {
+		go func() {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ok"))
+			})
+			log.Printf("Health check listening on :%s", cfg.HealthPort)
+			if err := http.ListenAndServe(":"+cfg.HealthPort, mux); err != nil {
+				log.Printf("Health check server error: %v", err)
+			}
+		}()
+	}
+
 	log.Println("OKR Agent started successfully")
 
 	sigCh := make(chan os.Signal, 1)
@@ -91,4 +107,5 @@ func main() {
 	<-sigCh
 
 	log.Println("Shutting down...")
+	bot.Stop()
 }

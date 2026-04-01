@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -28,21 +29,25 @@ type Bot struct {
 	handler MessageHandler
 
 	// 去重：跟踪已处理的消息 ID，避免重复处理
-	seen   map[string]bool
+	seen   map[string]time.Time
 	seenMu sync.Mutex
+
+	// 停止信号
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
-// NewBot 创建一个新的 Bot 实例。
-func NewBot(client *Client) *Bot {
-	return &Bot{
-		client: client,
-		seen:   make(map[string]bool),
+// NewBot 创建一个新的 Bot 实例。handler 必须在启动前设置。
+func NewBot(client *Client, handler MessageHandler) *Bot {
+	b := &Bot{
+		client:  client,
+		handler: handler,
+		seen:    make(map[string]time.Time),
+		done:    make(chan struct{}),
 	}
-}
-
-// SetHandler 设置消息处理函数，将所有消息路由到 Agent。
-func (b *Bot) SetHandler(handler MessageHandler) {
-	b.handler = handler
+	// 后台清理过期的去重记录，防止内存泄漏
+	go b.cleanupLoop()
+	return b
 }
 
 // messageContent 表示接收到的消息的 JSON 内容。
@@ -52,6 +57,9 @@ type messageContent struct {
 
 // Start 启动 WebSocket 长轮询以接收机器人事件。
 func (b *Bot) Start() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = cancel
+
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 			b.handleMessage(ctx, event)
@@ -64,7 +72,38 @@ func (b *Bot) Start() error {
 	)
 
 	log.Println("Bot WebSocket connecting...")
-	return wsClient.Start(context.Background())
+	err := wsClient.Start(ctx)
+	close(b.done)
+	return err
+}
+
+// Stop 停止 Bot WebSocket 连接。
+func (b *Bot) Stop() {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	<-b.done
+}
+
+// cleanupLoop 定期清理过期的事件去重记录，防止 seen map 无限增长。
+func (b *Bot) cleanupLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			b.seenMu.Lock()
+			cutoff := time.Now().Add(-2 * time.Hour)
+			for id, t := range b.seen {
+				if t.Before(cutoff) {
+					delete(b.seen, id)
+				}
+			}
+			b.seenMu.Unlock()
+		case <-b.done:
+			return
+		}
+	}
 }
 
 func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) {
@@ -73,15 +112,15 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 	}
 
 	// 通过 event_id 去重
-	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil && event.EventV2Base.Header.EventID != "" {
 		eventID := event.EventV2Base.Header.EventID
 		b.seenMu.Lock()
-		if b.seen[eventID] {
+		if _, dup := b.seen[eventID]; dup {
 			b.seenMu.Unlock()
 			log.Printf("Skipping duplicate event: %s", eventID)
 			return
 		}
-		b.seen[eventID] = true
+		b.seen[eventID] = time.Now()
 		b.seenMu.Unlock()
 	}
 

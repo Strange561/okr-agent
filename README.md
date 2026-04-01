@@ -1,6 +1,6 @@
 # OKR Agent
 
-智能 OKR 教练 Agent。通过飞书 Bot 与团队成员自然语言对话，自主调用工具查询 OKR 数据、进行多维度评估、发送个性化提醒，并根据风险信号动态调度干预。
+智能 OKR Agent。通过飞书 Bot 与团队成员自然语言对话，自主调用工具查询 OKR 数据、进行多维度评估、发送个性化提醒，并根据风险信号动态调度干预。
 
 ## 核心能力
 
@@ -41,7 +41,7 @@ okr-agent/
 ├── agent/
 │   ├── agent.go                # ReAct 循环核心（Run + RunOneShot）
 │   ├── types.go                # RunResult 类型
-│   └── system_prompt.go        # OKR 教练系统提示词
+│   └── system_prompt.go        # OKR 助手系统提示词
 ├── llm/
 │   ├── client.go               # Azure OpenAI Chat Completion HTTP 客户端
 │   └── types.go                # Request/Response/Tool 类型定义

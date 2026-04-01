@@ -36,7 +36,7 @@ func (r *Registry) Register(t Tool) {
 	r.tools[t.Name()] = t
 }
 
-// GetToolParams 将所有已注册的工具转换为 Azure OpenAI 工具格式。
+// GetToolParams 将所有已注册的工具转换为 LLM 工具格式。
 //
 // 此方法在每次 Agent 循环的 LLM 请求中被调用，
 // 将注册表中的工具信息打包为 LLM 可理解的 JSON 格式。

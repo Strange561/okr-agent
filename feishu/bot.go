@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -138,6 +139,18 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 		b.seenMu.Unlock()
 	}
 
+	// 基于 create_time 过滤过期消息（终极防线：无论飞书怎么重发，create_time 不变）
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		createTimeStr := event.EventV2Base.Header.CreateTime
+		if createTimeMS, err := strconv.ParseInt(createTimeStr, 10, 64); err == nil {
+			age := time.Since(time.UnixMilli(createTimeMS))
+			if age > 5*time.Minute {
+				log.Printf("Skipping stale event (age=%s, create_time=%s)", age.Round(time.Second), createTimeStr)
+				return
+			}
+		}
+	}
+
 	msg := event.Event.Message
 
 	senderID := ""
@@ -176,7 +189,15 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 		}
 	}
 
-	log.Printf("Received message: '%s' from user: %s", text, senderID)
+	eventID := ""
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		eventID = event.EventV2Base.Header.EventID
+	}
+	msgID := ""
+	if msg.MessageId != nil {
+		msgID = *msg.MessageId
+	}
+	log.Printf("Received message: '%s' from user: %s (event=%s, msg=%s)", text, senderID, eventID, msgID)
 
 	if b.handler == nil {
 		log.Println("No handler registered")
@@ -200,6 +221,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 	response := b.handler(ctx, senderID, mentionedUsers, enrichedText)
 
 	if response != "" {
+		log.Printf("Sending reply to %s (event=%s, len=%d)", senderID, eventID, len(response))
 		if err := b.client.SendTextMessage(ctx, senderID, response); err != nil {
 			log.Printf("Failed to reply to %s: %v", senderID, err)
 		}

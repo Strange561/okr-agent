@@ -16,12 +16,19 @@ type ConversationStore interface {
 type SnapshotStore interface {
 	SaveOKRSnapshot(ctx context.Context, userID, month, okrData string) error
 	GetOKRSnapshots(ctx context.Context, userID string, limit int) ([]OKRSnapshot, error)
+	CleanupOldSnapshots(ctx context.Context, retentionDays int) (int64, error)
 }
 
 // UserContextStore 定义用户上下文存储能力。
 type UserContextStore interface {
 	GetUserContext(ctx context.Context, userID string) (*UserContext, error)
 	TouchUserInteraction(ctx context.Context, userID string) error
+}
+
+// AgentStore 组合 Agent 所需的存储接口。
+type AgentStore interface {
+	ConversationStore
+	UserContextStore
 }
 
 // SchedulerStateStore 定义调度状态存储能力。

@@ -76,3 +76,14 @@ func (s *Store) GetOKRSnapshots(ctx context.Context, userID string, limit int) (
 	}
 	return snapshots, rows.Err()
 }
+
+// CleanupOldSnapshots 删除超过指定天数的旧快照。
+func (s *Store) CleanupOldSnapshots(ctx context.Context, retentionDays int) (int64, error) {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM okr_snapshots WHERE created_at < datetime('now', ? || ' days')`,
+		fmt.Sprintf("%d", -retentionDays))
+	if err != nil {
+		return 0, fmt.Errorf("cleanup old snapshots: %w", err)
+	}
+	return result.RowsAffected()
+}

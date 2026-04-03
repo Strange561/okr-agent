@@ -24,6 +24,9 @@ type Config struct {
 	RiskDaysHigh     int // 多少天未更新视为高风险，默认 14
 	RiskDaysCritical int // 多少天未更新视为危急，默认 21
 
+	// 快照保留天数
+	SnapshotRetentionDays int // 超过多少天的快照自动清理，默认 90
+
 	// 提醒冷却时间（小时）
 	RiskCooldownHighHours     int // 高风险提醒间隔，默认 72（3 天）
 	RiskCooldownCriticalHours int // 危急提醒间隔，默认 24（1 天）
@@ -41,6 +44,7 @@ func Load() (*Config, error) {
 		SQLitePath:                getEnv("SQLITE_PATH", "./data/okr-agent.db"),
 		CronSchedule:              getEnv("CRON_SCHEDULE", "0 9 * * 1"),
 		HealthPort:                getEnv("HEALTH_PORT", "8080"),
+		SnapshotRetentionDays:     getEnvInt("SNAPSHOT_RETENTION_DAYS", 90),
 		RiskDaysHigh:              getEnvInt("RISK_DAYS_HIGH", 14),
 		RiskDaysCritical:          getEnvInt("RISK_DAYS_CRITICAL", 21),
 		RiskCooldownHighHours:     getEnvInt("RISK_COOLDOWN_HIGH_HOURS", 72),

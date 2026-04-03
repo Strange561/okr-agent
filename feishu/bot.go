@@ -62,7 +62,8 @@ func (b *Bot) Start() error {
 
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-			b.handleMessage(ctx, event)
+			// 异步处理消息，避免阻塞事件回调导致飞书超时重发
+			go b.handleMessage(context.Background(), event)
 			return nil
 		})
 
@@ -121,6 +122,19 @@ func (b *Bot) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV
 			return
 		}
 		b.seen[eventID] = time.Now()
+		b.seenMu.Unlock()
+	}
+
+	// 通过 message_id 去重（飞书重发消息时 event_id 不同但 message_id 相同）
+	if event.Event.Message.MessageId != nil && *event.Event.Message.MessageId != "" {
+		msgID := *event.Event.Message.MessageId
+		b.seenMu.Lock()
+		if _, dup := b.seen[msgID]; dup {
+			b.seenMu.Unlock()
+			log.Printf("Skipping duplicate message_id: %s", msgID)
+			return
+		}
+		b.seen[msgID] = time.Now()
 		b.seenMu.Unlock()
 	}
 

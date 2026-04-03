@@ -151,9 +151,17 @@ type tokenResponse struct {
 	Expire            int    `json:"expire"`
 }
 
-// getTenantAccessToken 从飞书获取租户访问令牌。
+// getTenantAccessToken 从飞书获取租户访问令牌（带缓存）。
 func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
-	// 使用 json.Marshal 构造请求体，避免 fmt.Sprintf 拼接密钥
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+
+	// 缓存有效则直接返回
+	if c.tokenCache != "" && time.Now().Before(c.tokenExpiry) {
+		return c.tokenCache, nil
+	}
+
+	// 缓存过期或为空，重新获取
 	payload, err := json.Marshal(tokenRequest{AppID: c.AppID, AppSecret: c.AppSecret})
 	if err != nil {
 		return "", fmt.Errorf("marshal token request: %w", err)
@@ -187,7 +195,11 @@ func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("token error: code=%d msg=%s", tokenResp.Code, tokenResp.Msg)
 	}
 
-	return tokenResp.TenantAccessToken, nil
+	// 缓存 token，提前 60 秒失效以避免边界情况
+	c.tokenCache = tokenResp.TenantAccessToken
+	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.Expire-60) * time.Second)
+
+	return c.tokenCache, nil
 }
 
 // isCurrentMonthPeriod 检查周期名称是否匹配当前月份。

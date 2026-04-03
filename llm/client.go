@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // Client 是 LLM 聊天补全 API 的 HTTP 客户端。
@@ -31,7 +32,7 @@ func NewClient(endpoint, apiKey, model string) *Client {
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		model:    model,
-		http:     &http.Client{},
+		http:     &http.Client{Timeout: 120 * time.Second},
 	}
 }
 

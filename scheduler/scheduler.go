@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -13,6 +14,8 @@ import (
 	"okr-agent/feishu"
 	"okr-agent/memory"
 )
+
+const maxConcurrentUsers = 3
 
 // Scheduler 管理基于 cron 的 OKR 检查，由 Agent 驱动智能决策。
 type Scheduler struct {
@@ -66,10 +69,26 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
+	// 每日 3:00 AM 清理过期快照
+	_, err = s.cron.AddFunc("0 3 * * *", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		defer cancel()
+		deleted, err := s.store.CleanupOldSnapshots(ctx, s.config.SnapshotRetentionDays)
+		if err != nil {
+			log.Printf("Snapshot cleanup error: %v", err)
+		} else if deleted > 0 {
+			log.Printf("Cleaned up %d old snapshots", deleted)
+		}
+	})
+	if err != nil {
+		return err
+	}
+
 	s.cron.Start()
 	log.Printf("Scheduler started with schedule: %s", s.config.CronSchedule)
 	log.Println("Daily risk scan scheduled at 10:00")
 	log.Println("Friday OKR reminder scheduled at 10:00")
+	log.Printf("Snapshot cleanup scheduled at 03:00 (retention: %d days)", s.config.SnapshotRetentionDays)
 	return nil
 }
 
@@ -91,23 +110,45 @@ func (s *Scheduler) RunCheck() {
 
 	log.Printf("Starting agent-driven OKR check for %d users", len(users))
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentUsers)
+
 	for _, u := range users {
-		name := u.Name
-		if name == "" {
-			name = u.OpenID
-		}
+		wg.Add(1)
+		sem <- struct{}{}
 
-		prompt := "请评估用户 " + name + " (open_id: " + u.OpenID + ") 的本月 OKR。" +
-			"先获取 OKR 数据，然后逐个评价每个 Objective 和 KR，最后用 send_reminder 将评估结果发送给该用户（标题用「OKR 周报评价」）。"
+		go func(u feishu.UserInfo) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		result, err := s.agent.RunOneShot(ctx, prompt)
-		if err != nil {
-			log.Printf("Agent error for %s: %v", name, err)
-			continue
-		}
-		log.Printf("Completed check for %s (tool_calls=%d)", name, result.ToolCalls)
+			name := u.Name
+			if name == "" {
+				name = u.OpenID
+			}
+
+			okrData, err := s.feishu.GetUserOKRs(ctx, u.OpenID, "")
+			if err != nil {
+				log.Printf("Error fetching OKR for %s: %v", name, err)
+				return
+			}
+			okrSummary := feishu.FormatOKRForEvaluation(okrData)
+
+			prompt := fmt.Sprintf(
+				"请评估用户 %s (open_id: %s) 的本月 OKR。\n\n"+
+					"以下是该用户的 OKR 数据（已获取，无需再次查询）：\n%s\n\n"+
+					"请逐个评价每个 Objective 和 KR，最后用 send_reminder 将评估结果发送给该用户（标题用「OKR 周报评价」）。",
+				name, u.OpenID, okrSummary)
+
+			result, err := s.agent.RunOneShot(ctx, prompt)
+			if err != nil {
+				log.Printf("Agent error for %s: %v", name, err)
+				return
+			}
+			log.Printf("Completed check for %s (tool_calls=%d)", name, result.ToolCalls)
+		}(u)
 	}
 
+	wg.Wait()
 	log.Println("OKR check completed")
 }
 
@@ -124,87 +165,101 @@ func (s *Scheduler) DailyRiskScan() {
 
 	log.Printf("Starting daily risk scan for %d users", len(users))
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentUsers)
+
 	for _, u := range users {
-		name := u.Name
-		if name == "" {
-			name = u.OpenID
-		}
+		wg.Add(1)
+		sem <- struct{}{}
 
-		// 获取 OKR 数据以检查最后更新时间
-		okrData, err := s.feishu.GetUserOKRs(ctx, u.OpenID, "")
-		if err != nil {
-			log.Printf("Risk scan: error fetching OKR for %s: %v", name, err)
-			continue
-		}
+		go func(u feishu.UserInfo) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		lastModified := feishu.LatestModifiedTime(okrData)
-		daysSinceUpdate := 0
-		if lastModified > 0 {
-			daysSinceUpdate = int(time.Since(time.Unix(lastModified, 0)).Hours() / 24)
-		} else {
-			daysSinceUpdate = 999 // 从未更新
-		}
-
-		// 使用可配置的阈值判断风险等级
-		riskLevel := "normal"
-		switch {
-		case daysSinceUpdate >= s.config.RiskDaysCritical:
-			riskLevel = "critical"
-		case daysSinceUpdate >= s.config.RiskDaysHigh:
-			riskLevel = "high"
-		}
-
-		// 保存状态
-		state := &memory.SchedulerState{
-			UserID:          u.OpenID,
-			RiskLevel:       riskLevel,
-			DaysSinceUpdate: daysSinceUpdate,
-		}
-
-		// 检查是否需要发送提醒
-		existingState, _ := s.store.GetSchedulerState(ctx, u.OpenID)
-		shouldRemind := false
-
-		criticalCooldown := time.Duration(s.config.RiskCooldownCriticalHours) * time.Hour
-		highCooldown := time.Duration(s.config.RiskCooldownHighHours) * time.Hour
-
-		switch riskLevel {
-		case "critical":
-			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > criticalCooldown {
-				shouldRemind = true
+			name := u.Name
+			if name == "" {
+				name = u.OpenID
 			}
-		case "high":
-			if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > highCooldown {
-				shouldRemind = true
-			}
-		}
 
-		if shouldRemind {
-			log.Printf("Risk scan: %s is %s (days=%d), generating reminder", name, riskLevel, daysSinceUpdate)
-
-			prompt := fmt.Sprintf(
-				"用户 %s (open_id: %s) 已经 %d 天没有更新 OKR。风险等级：%s。"+
-					"请先查看该用户的 OKR 数据，然后生成一条个性化的提醒消息并发送给该用户。"+
-					"提醒应当友好但有紧迫感，提及具体的 OKR 内容。",
-				name, u.OpenID, daysSinceUpdate, riskLevel)
-
-			result, err := s.agent.RunOneShot(ctx, prompt)
+			// 获取 OKR 数据以检查最后更新时间
+			okrData, err := s.feishu.GetUserOKRs(ctx, u.OpenID, "")
 			if err != nil {
-				log.Printf("Agent reminder error for %s: %v", name, err)
+				log.Printf("Risk scan: error fetching OKR for %s: %v", name, err)
+				return
+			}
+
+			lastModified := feishu.LatestModifiedTime(okrData)
+			daysSinceUpdate := 0
+			if lastModified > 0 {
+				daysSinceUpdate = int(time.Since(time.Unix(lastModified, 0)).Hours() / 24)
 			} else {
-				log.Printf("Sent personalized reminder to %s (tool_calls=%d)", name, result.ToolCalls)
-				state.LastReminder = timePtr(time.Now())
-				if err := s.store.UpdateReminderTime(ctx, u.OpenID); err != nil {
-					log.Printf("Error updating reminder time for %s: %v", name, err)
+				daysSinceUpdate = 999 // 从未更新
+			}
+
+			// 使用可配置的阈值判断风险等级
+			riskLevel := "normal"
+			switch {
+			case daysSinceUpdate >= s.config.RiskDaysCritical:
+				riskLevel = "critical"
+			case daysSinceUpdate >= s.config.RiskDaysHigh:
+				riskLevel = "high"
+			}
+
+			// 保存状态
+			state := &memory.SchedulerState{
+				UserID:          u.OpenID,
+				RiskLevel:       riskLevel,
+				DaysSinceUpdate: daysSinceUpdate,
+			}
+
+			// 检查是否需要发送提醒
+			existingState, _ := s.store.GetSchedulerState(ctx, u.OpenID)
+			shouldRemind := false
+
+			criticalCooldown := time.Duration(s.config.RiskCooldownCriticalHours) * time.Hour
+			highCooldown := time.Duration(s.config.RiskCooldownHighHours) * time.Hour
+
+			switch riskLevel {
+			case "critical":
+				if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > criticalCooldown {
+					shouldRemind = true
+				}
+			case "high":
+				if existingState.LastReminder == nil || time.Since(*existingState.LastReminder) > highCooldown {
+					shouldRemind = true
 				}
 			}
-		}
 
-		if err := s.store.SaveSchedulerState(ctx, state); err != nil {
-			log.Printf("Error saving scheduler state for %s: %v", name, err)
-		}
+			if shouldRemind {
+				log.Printf("Risk scan: %s is %s (days=%d), generating reminder", name, riskLevel, daysSinceUpdate)
+
+				okrSummary := feishu.FormatOKRForEvaluation(okrData)
+				prompt := fmt.Sprintf(
+					"用户 %s (open_id: %s) 已经 %d 天没有更新 OKR。风险等级：%s。\n\n"+
+						"以下是该用户的 OKR 数据（已获取，无需再次查询）：\n%s\n\n"+
+						"请根据以上数据生成一条个性化的提醒消息并用 send_reminder 发送给该用户。"+
+						"提醒应当友好但有紧迫感，提及具体的 OKR 内容。",
+					name, u.OpenID, daysSinceUpdate, riskLevel, okrSummary)
+
+				result, err := s.agent.RunOneShot(ctx, prompt)
+				if err != nil {
+					log.Printf("Agent reminder error for %s: %v", name, err)
+				} else {
+					log.Printf("Sent personalized reminder to %s (tool_calls=%d)", name, result.ToolCalls)
+					state.LastReminder = timePtr(time.Now())
+					if err := s.store.UpdateReminderTime(ctx, u.OpenID); err != nil {
+						log.Printf("Error updating reminder time for %s: %v", name, err)
+					}
+				}
+			}
+
+			if err := s.store.SaveSchedulerState(ctx, state); err != nil {
+				log.Printf("Error saving scheduler state for %s: %v", name, err)
+			}
+		}(u)
 	}
 
+	wg.Wait()
 	log.Println("Daily risk scan completed")
 }
 

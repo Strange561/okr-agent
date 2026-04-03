@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 
 	"okr-agent/llm"
 	"okr-agent/memory"
@@ -19,13 +20,14 @@ const (
 
 // Agent 实现带有工具调用的 ReAct 循环。
 type Agent struct {
-	llm      *llm.Client
+	llm      llm.ChatClient
 	registry *tools.Registry
-	store    *memory.Store
+	store    memory.AgentStore
+	userMu   sync.Map // map[string]*sync.Mutex，per-user 并发控制
 }
 
 // New 创建一个新的 Agent。
-func New(llmClient *llm.Client, registry *tools.Registry, store *memory.Store) *Agent {
+func New(llmClient llm.ChatClient, registry *tools.Registry, store memory.AgentStore) *Agent {
 	return &Agent{
 		llm:      llmClient,
 		registry: registry,
@@ -33,8 +35,18 @@ func New(llmClient *llm.Client, registry *tools.Registry, store *memory.Store) *
 	}
 }
 
+// getUserLock 返回 per-user 的互斥锁，不存在则创建。
+func (a *Agent) getUserLock(userID string) *sync.Mutex {
+	val, _ := a.userMu.LoadOrStore(userID, &sync.Mutex{})
+	return val.(*sync.Mutex)
+}
+
 // Run 为指定用户执行带有对话历史的 Agent 循环。
 func (a *Agent) Run(ctx context.Context, userID, text string) (*RunResult, error) {
+	mu := a.getUserLock(userID)
+	mu.Lock()
+	defer mu.Unlock()
+
 	// 加载现有对话
 	conversation, err := a.store.GetConversation(ctx, userID)
 	if err != nil {
@@ -52,13 +64,14 @@ func (a *Agent) Run(ctx context.Context, userID, text string) (*RunResult, error
 	systemPrompt := BuildSystemPrompt(uc)
 
 	// 执行 ReAct 循环
-	result, err := a.reactLoop(ctx, systemPrompt, conversation)
+	result, updatedConversation, err := a.reactLoop(ctx, systemPrompt, conversation)
 	if err != nil {
 		return nil, err
 	}
 
-	// 保存对话
-	if saveErr := a.store.SaveConversation(ctx, userID, conversation); saveErr != nil {
+	// 保存对话前清除 ReasoningContent，避免浪费 token
+	stripReasoningContent(updatedConversation)
+	if saveErr := a.store.SaveConversation(ctx, userID, updatedConversation); saveErr != nil {
 		log.Printf("Warning: failed to save conversation for %s: %v", userID, saveErr)
 	}
 
@@ -71,11 +84,12 @@ func (a *Agent) Run(ctx context.Context, userID, text string) (*RunResult, error
 func (a *Agent) RunOneShot(ctx context.Context, text string) (*RunResult, error) {
 	messages := []llm.Message{{Role: "user", Content: text}}
 	systemPrompt := BuildSystemPrompt(nil)
-	return a.reactLoop(ctx, systemPrompt, messages)
+	result, _, err := a.reactLoop(ctx, systemPrompt, messages)
+	return result, err
 }
 
 // reactLoop 是 Run 和 RunOneShot 共用的核心 ReAct 循环。
-func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []llm.Message) (*RunResult, error) {
+func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []llm.Message) (*RunResult, []llm.Message, error) {
 	toolParams := a.registry.GetToolParams()
 	totalToolCalls := 0
 
@@ -94,7 +108,7 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []l
 
 		resp, err := a.llm.CreateMessage(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("LLM API call: %w", err)
+			return nil, messages, fmt.Errorf("LLM API call: %w", err)
 		}
 
 		choice := resp.Choices[0]
@@ -108,7 +122,7 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []l
 			return &RunResult{
 				Response:  extractText(choice.Message),
 				ToolCalls: totalToolCalls,
-			}, nil
+			}, messages, nil
 		}
 
 		if choice.FinishReason == "tool_calls" {
@@ -138,13 +152,19 @@ func (a *Agent) reactLoop(ctx context.Context, systemPrompt string, messages []l
 		return &RunResult{
 			Response:  extractText(choice.Message),
 			ToolCalls: totalToolCalls,
-		}, nil
+		}, messages, nil
 	}
 
 	return &RunResult{
 		Response:  "抱歉，我处理这个请求花了太长时间。请尝试简化你的问题。",
 		ToolCalls: totalToolCalls,
-	}, nil
+	}, messages, nil
+}
+
+func stripReasoningContent(messages []llm.Message) {
+	for i := range messages {
+		messages[i].ReasoningContent = ""
+	}
 }
 
 func extractText(msg llm.Message) string {
@@ -159,5 +179,25 @@ func truncateHistory(messages []llm.Message, maxTurns int) []llm.Message {
 	if len(messages) <= maxMessages {
 		return messages
 	}
-	return messages[len(messages)-maxMessages:]
+
+	// 计算初始截断点
+	cutIdx := len(messages) - maxMessages
+
+	// 向前推进，避免切在 tool_calls/tool 序列中间
+	for cutIdx < len(messages) {
+		msg := messages[cutIdx]
+		if msg.Role == "user" {
+			break
+		}
+		if msg.Role == "assistant" && len(msg.ToolCalls) == 0 {
+			break
+		}
+		cutIdx++
+	}
+
+	if cutIdx >= len(messages) {
+		return messages[len(messages)-2:]
+	}
+
+	return messages[cutIdx:]
 }

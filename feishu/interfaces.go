@@ -20,9 +20,9 @@ type UserService interface {
 
 // DocumentService 定义文档操作能力。
 type DocumentService interface {
-	ListDocComments(ctx context.Context, fileToken string, onlyUnsolved bool) ([]DocComment, error)
+	ListDocComments(ctx context.Context, fileToken, fileType string, onlyUnsolved bool) ([]DocComment, error)
 	GetDocContent(ctx context.Context, documentID string) (string, error)
 	ListDocBlocks(ctx context.Context, documentID string) ([]DocBlock, error)
 	UpdateDocBlock(ctx context.Context, documentID, blockID, newText string) error
-	ReplyToComment(ctx context.Context, fileToken, commentID, replyText string) error
+	ReplyToComment(ctx context.Context, fileToken, fileType, commentID, replyText string) error
 }

@@ -31,6 +31,10 @@ func NewListDocCommentsTool(fc *feishu.Client) *ListDocCommentsTool {
 				"type":        "string",
 				"description": "文档的 file_token（可从文档链接中提取）",
 			},
+			"file_type": map[string]interface{}{
+				"type":        "string",
+				"description": "文档类型：docx、doc、wiki、sheet 等，根据链接中的路径判断，默认 docx",
+			},
 			"only_unsolved": map[string]interface{}{
 				"type":        "boolean",
 				"description": "是否只返回未解决的评论，默认 true",
@@ -48,6 +52,7 @@ func (t *ListDocCommentsTool) InputSchema() json.RawMessage { return t.schema }
 func (t *ListDocCommentsTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var params struct {
 		FileToken    string `json:"file_token"`
+		FileType     string `json:"file_type"`
 		OnlyUnsolved *bool  `json:"only_unsolved"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
@@ -59,7 +64,7 @@ func (t *ListDocCommentsTool) Execute(ctx context.Context, input json.RawMessage
 		onlyUnsolved = *params.OnlyUnsolved
 	}
 
-	comments, err := t.feishu.ListDocComments(ctx, params.FileToken, onlyUnsolved)
+	comments, err := t.feishu.ListDocComments(ctx, params.FileToken, params.FileType, onlyUnsolved)
 	if err != nil {
 		return "", fmt.Errorf("list doc comments: %w", err)
 	}
@@ -251,6 +256,10 @@ func NewReplyDocCommentTool(fc *feishu.Client) *ReplyDocCommentTool {
 				"type":        "string",
 				"description": "文档的 file_token",
 			},
+			"file_type": map[string]interface{}{
+				"type":        "string",
+				"description": "文档类型：docx、doc、wiki、sheet 等，默认 docx",
+			},
 			"comment_id": map[string]interface{}{
 				"type":        "string",
 				"description": "要回复的评论 ID",
@@ -272,6 +281,7 @@ func (t *ReplyDocCommentTool) InputSchema() json.RawMessage { return t.schema }
 func (t *ReplyDocCommentTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var params struct {
 		FileToken string `json:"file_token"`
+		FileType  string `json:"file_type"`
 		CommentID string `json:"comment_id"`
 		ReplyText string `json:"reply_text"`
 	}
@@ -279,7 +289,7 @@ func (t *ReplyDocCommentTool) Execute(ctx context.Context, input json.RawMessage
 		return "", fmt.Errorf("parse input: %w", err)
 	}
 
-	if err := t.feishu.ReplyToComment(ctx, params.FileToken, params.CommentID, params.ReplyText); err != nil {
+	if err := t.feishu.ReplyToComment(ctx, params.FileToken, params.FileType, params.CommentID, params.ReplyText); err != nil {
 		return "", fmt.Errorf("reply to comment: %w", err)
 	}
 

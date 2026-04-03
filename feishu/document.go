@@ -7,6 +7,7 @@ import (
 
 	larkdocx "github.com/larksuite/oapi-sdk-go/v3/service/docx/v1"
 	larkdrive "github.com/larksuite/oapi-sdk-go/v3/service/drive/v1"
+	larkwiki "github.com/larksuite/oapi-sdk-go/v3/service/wiki/v2"
 )
 
 // DocComment 表示文档的一条评论（简化后供 Agent 使用）。
@@ -37,17 +38,21 @@ type DocBlock struct {
 //
 // 参数：
 //   - fileToken: 文档的 file_token
+//   - fileType: 文档类型（docx、doc、wiki、sheet 等）
 //   - onlyUnsolved: 是否只返回未解决的评论
 //
 // 使用 Lark SDK 的 Drive.FileComment.List 方法，支持分页。
-func (c *Client) ListDocComments(ctx context.Context, fileToken string, onlyUnsolved bool) ([]DocComment, error) {
+func (c *Client) ListDocComments(ctx context.Context, fileToken string, fileType string, onlyUnsolved bool) ([]DocComment, error) {
+	if fileType == "" {
+		fileType = "docx"
+	}
 	var allComments []DocComment
 	pageToken := ""
 
 	for {
 		builder := larkdrive.NewListFileCommentReqBuilder().
 			FileToken(fileToken).
-			FileType("docx").
+			FileType(fileType).
 			UserIdType("open_id").
 			PageSize(50)
 
@@ -211,7 +216,10 @@ func (c *Client) UpdateDocBlock(ctx context.Context, documentID, blockID, newTex
 // ReplyToComment 回复文档中的一条评论。
 //
 // 通过 Create FileComment 并设置 CommentId，SDK 会将其视为对已有评论的回复。
-func (c *Client) ReplyToComment(ctx context.Context, fileToken, commentID, replyText string) error {
+func (c *Client) ReplyToComment(ctx context.Context, fileToken, fileType, commentID, replyText string) error {
+	if fileType == "" {
+		fileType = "docx"
+	}
 	textRun := larkdrive.NewTextRunBuilder().Text(replyText).Build()
 	element := larkdrive.NewReplyElementBuilder().
 		Type("text_run").
@@ -233,7 +241,7 @@ func (c *Client) ReplyToComment(ctx context.Context, fileToken, commentID, reply
 
 	req := larkdrive.NewCreateFileCommentReqBuilder().
 		FileToken(fileToken).
-		FileType("docx").
+		FileType(fileType).
 		UserIdType("open_id").
 		FileComment(comment).
 		Build()
@@ -376,6 +384,29 @@ func blockTypeName(blockType int) string {
 	default:
 		return "其他"
 	}
+}
+
+// ResolveWikiToken 将 wiki node token 解析为底层文档的 obj_token 和 obj_type。
+//
+// 飞书 wiki 页面底层是 docx/doc/sheet 等文档类型，评论 API 需要使用真实的 obj_token。
+func (c *Client) ResolveWikiToken(ctx context.Context, wikiToken string) (objToken string, objType string, err error) {
+	req := larkwiki.NewGetNodeSpaceReqBuilder().
+		Token(wikiToken).
+		Build()
+
+	resp, err := c.LarkClient.Wiki.Space.GetNode(ctx, req)
+	if err != nil {
+		return "", "", fmt.Errorf("get wiki node: %w", err)
+	}
+	if !resp.Success() {
+		return "", "", fmt.Errorf("get wiki node failed: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+
+	node := resp.Data.Node
+	if node == nil {
+		return "", "", fmt.Errorf("wiki node not found")
+	}
+	return derefStr(node.ObjToken), derefStr(node.ObjType), nil
 }
 
 // derefStr 安全地解引用字符串指针。

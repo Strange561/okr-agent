@@ -22,10 +22,11 @@ import "encoding/json"
 // ToolCalls 和 ToolCallID 用于支持 OpenAI 的 function calling 机制，
 // 这是 Agent 能够调用外部工具（如查询 OKR、发送消息）的关键。
 type Message struct {
-	Role       string     `json:"role"`                  // 消息角色：system / user / assistant / tool
-	Content    string     `json:"content"`               // 消息文本内容
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`  // 助手请求的工具调用列表（仅 assistant 角色使用）
-	ToolCallID string     `json:"tool_call_id,omitempty"` // 工具调用结果对应的调用 ID（仅 tool 角色使用）
+	Role             string     `json:"role"`                        // 消息角色：system / user / assistant / tool
+	Content          string     `json:"content"`                     // 消息文本内容
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // 模型的思考过程（Kimi K2.5 等推理模型使用）
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // 助手请求的工具调用列表（仅 assistant 角色使用）
+	ToolCallID       string     `json:"tool_call_id,omitempty"`      // 工具调用结果对应的调用 ID（仅 tool 角色使用）
 }
 
 // ToolCall 表示助手发起的工具调用。
